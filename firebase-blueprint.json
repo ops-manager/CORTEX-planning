@@ -1,0 +1,60 @@
+{
+  "entities": {
+    "Agent": {
+      "title": "Agent",
+      "description": "Operational dispatch agent",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "station": { "type": "string" },
+        "team": { "type": "string" },
+        "defaultMissionId": { "type": "string" },
+        "order": { "type": "number" },
+        "ownerId": { "type": "string" }
+      },
+      "required": ["id", "name", "station", "team", "order"]
+    },
+    "Shift": {
+      "title": "Shift",
+      "description": "Predefined shift code and hours",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "code": { "type": "string" },
+        "hours": { "type": "string" },
+        "defaultMissionId": { "type": "string" },
+        "defaultPause": { "type": "string" },
+        "order": { "type": "number" },
+        "ownerId": { "type": "string" },
+        "color": { "type": "string" },
+        "season": { "type": "string" },
+        "hidden": { "type": "boolean" }
+      },
+      "required": ["id", "code", "hours", "order"]
+    },
+    "PlanningDoc": {
+      "title": "Planning Data",
+      "description": "Grid schedule mapping agentId_YYYY-MM-DD to shiftCode",
+      "type": "object",
+      "properties": {
+        "assignments": { "type": "object" },
+        "updatedAt": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "agents": {
+      "entity": "Agent",
+      "description": "List of agents"
+    },
+    "shifts": {
+      "entity": "Shift",
+      "description": "List of shift configurations"
+    },
+    "planning": {
+      "entity": "PlanningDoc",
+      "description": "Planning state persistence"
+    }
+  }
+}

@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Shift, ShiftSeason } from '../types';
 import { 
   getShiftStyle, 
@@ -23,7 +23,9 @@ import {
   EyeOff,
   RotateCcw,
   Sparkles,
-  Filter
+  Filter,
+  Minimize2,
+  Maximize2
 } from 'lucide-react';
 
 interface ShiftLegendSidebarProps {
@@ -60,6 +62,27 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
   // Modal states
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
   const [editingShift, setEditingShift] = useState<Shift | null>(null);
+
+  // Compact / Minimized View Mode State (Show only shift codes)
+  const [isCompactView, setIsCompactView] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('cortex_shift_sidebar_compact') === 'true';
+    } catch {
+      return false;
+    }
+  });
+
+  const handleToggleCompact = () => {
+    setIsCompactView(prev => {
+      const next = !prev;
+      try {
+        localStorage.setItem('cortex_shift_sidebar_compact', String(next));
+      } catch {
+        // ignore storage errors
+      }
+      return next;
+    });
+  };
 
   // Local season filter fallback if not managed externally
   const [localSeasonFilter, setLocalSeasonFilter] = useState<ShiftSeason>('all');
@@ -323,14 +346,14 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
         </div>
       </div>
 
-      {/* Visibility Tabs: Actifs (X) vs Masqués (Y) */}
-      <div className="px-3 py-1.5 bg-slate-950/40 border-b border-slate-800 flex items-center justify-between text-xs">
+      {/* Visibility Tabs & Compact Mode Toggle */}
+      <div className="px-3 py-1.5 bg-slate-950/40 border-b border-slate-800 flex items-center justify-between text-xs gap-1.5">
         <div className="flex items-center gap-1">
           <button
             id="sidebar-tab-active-shifts"
             onClick={() => setVisibilityTab('active')}
             className={`
-              flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium text-[11px] transition-colors
+              flex items-center gap-1 px-2 py-1 rounded-md font-medium text-[11px] transition-colors
               ${visibilityTab === 'active' 
                 ? 'bg-slate-800 text-blue-300 font-bold border border-slate-700' 
                 : 'text-slate-400 hover:text-slate-200'}
@@ -338,7 +361,7 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
           >
             <Eye className="w-3 h-3 text-emerald-400" />
             <span>Actifs</span>
-            <span className="text-[10px] px-1.5 bg-slate-900 rounded-full text-slate-300 font-mono-code">
+            <span className="text-[10px] px-1 bg-slate-900 rounded-full text-slate-300 font-mono-code">
               {activeCount}
             </span>
           </button>
@@ -347,7 +370,7 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
             id="sidebar-tab-hidden-shifts"
             onClick={() => setVisibilityTab('hidden')}
             className={`
-              flex items-center gap-1.5 px-2.5 py-1 rounded-md font-medium text-[11px] transition-colors
+              flex items-center gap-1 px-2 py-1 rounded-md font-medium text-[11px] transition-colors
               ${visibilityTab === 'hidden' 
                 ? 'bg-slate-800 text-amber-300 font-bold border border-slate-700' 
                 : 'text-slate-400 hover:text-slate-200'}
@@ -356,23 +379,50 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
             <EyeOff className="w-3 h-3 text-amber-400" />
             <span>Masqués</span>
             {hiddenCount > 0 && (
-              <span className="text-[10px] px-1.5 bg-amber-950/60 text-amber-300 rounded-full font-mono-code">
+              <span className="text-[10px] px-1 bg-amber-950/60 text-amber-300 rounded-full font-mono-code">
                 {hiddenCount}
               </span>
             )}
           </button>
         </div>
 
-        {visibilityTab === 'hidden' && hiddenCount > 0 && (
+        <div className="flex items-center gap-1">
+          {visibilityTab === 'hidden' && hiddenCount > 0 && (
+            <button
+              id="unhide-all-shifts-btn"
+              onClick={handleUnhideAll}
+              title="Tout réafficher dans la liste active"
+              className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-0.5 font-semibold hover:underline mr-1"
+            >
+              <RotateCcw className="w-2.5 h-2.5" /> Tout réafficher
+            </button>
+          )}
+
+          {/* Minimize / Compact View Mode Button */}
           <button
-            id="unhide-all-shifts-btn"
-            onClick={handleUnhideAll}
-            title="Tout réafficher dans la liste active"
-            className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 font-semibold hover:underline"
+            id="toggle-compact-shifts-view-btn"
+            onClick={handleToggleCompact}
+            title={isCompactView ? "Afficher les cartes détaillées avec horaires" : "Réduire les cartes et afficher uniquement les codes"}
+            className={`
+              flex items-center gap-1 px-2 py-1 rounded-md text-[11px] font-medium transition-all border
+              ${isCompactView 
+                ? 'bg-blue-600/30 text-blue-300 border-blue-500/50 shadow-sm font-bold' 
+                : 'bg-slate-900/90 text-slate-300 hover:text-white border-slate-700/80 hover:border-slate-600'}
+            `}
           >
-            <RotateCcw className="w-2.5 h-2.5" /> Tout réafficher
+            {isCompactView ? (
+              <>
+                <Maximize2 className="w-3 h-3 text-blue-400" />
+                <span>Détaillé</span>
+              </>
+            ) : (
+              <>
+                <Minimize2 className="w-3 h-3 text-blue-400" />
+                <span>Réduire</span>
+              </>
+            )}
           </button>
-        )}
+        </div>
       </div>
 
       {/* Mode Tampon Notice / Status */}
@@ -412,8 +462,8 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
         )}
       </div>
 
-      {/* Shift Items List with CRUD and Visibility Actions */}
-      <div className="flex-1 overflow-y-auto divide-y divide-slate-800/60 p-2 space-y-1">
+      {/* Shift Items List (Compact Grid or Detailed Cards) */}
+      <div className="flex-1 overflow-y-auto p-2">
         {displayedShifts.length === 0 ? (
           <div className="p-6 text-center text-slate-500 text-xs space-y-2">
             <Layers className="w-8 h-8 mx-auto text-slate-700" />
@@ -431,132 +481,193 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
               </button>
             )}
           </div>
-        ) : (
-          displayedShifts.map((shift) => {
-            const style = getShiftStyle(shift.code, shift.color);
-            const duration = calculateShiftDurationHours(shift.hours);
-            const count = shiftCounts[shift.code] || 0;
-            const isStampActive = activeStampShift === shift.code;
-            const seasonInfo = getSeasonInfo(shift.season);
+        ) : isCompactView ? (
+          /* Minimized Compact Grid: Shows all codes at a glance without scrolling */
+          <div className="grid grid-cols-4 gap-1.5 auto-rows-max">
+            {displayedShifts.map((shift) => {
+              const style = getShiftStyle(shift.code, shift.color);
+              const count = shiftCounts[shift.code] || 0;
+              const isStampActive = activeStampShift === shift.code;
+              const seasonInfo = getSeasonInfo(shift.season);
 
-            return (
-              <div
-                key={shift.id}
-                id={`shift-item-${shift.code}`}
-                onClick={() => {
-                  if (hasActiveSelection) {
-                    onApplyShiftToSelection(shift.code);
-                  } else {
-                    onSelectStampShift(isStampActive ? null : shift.code);
-                  }
-                }}
-                className={`
-                  group p-2 rounded-lg border transition-all cursor-pointer text-xs flex flex-col gap-1.5 relative
-                  ${isStampActive 
-                    ? 'bg-blue-900/40 border-blue-500 ring-2 ring-blue-500 shadow-md scale-[1.01]' 
-                    : shift.hidden
-                      ? 'bg-slate-950/25 opacity-75 hover:opacity-100 border-dashed border-slate-800'
-                      : 'bg-slate-950/40 hover:bg-slate-800/60 border-slate-800/70 hover:border-slate-700'}
-                `}
-              >
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    {/* Shift Code Pill with dynamic styling */}
-                    <span
-                      className={`
-                        px-2 py-0.5 rounded font-mono-code font-bold text-xs border tracking-wide shadow-sm
-                        ${style.badgeClass}
-                      `}
-                      style={style.customStyle}
-                    >
-                      {shift.code}
+              return (
+                <div
+                  key={shift.id}
+                  id={`compact-shift-item-${shift.code}`}
+                  onClick={() => {
+                    if (hasActiveSelection) {
+                      onApplyShiftToSelection(shift.code);
+                    } else {
+                      onSelectStampShift(isStampActive ? null : shift.code);
+                    }
+                  }}
+                  title={`${shift.code} : ${shift.label || shift.code} (${shift.hours || 'Horaires n/a'}) · ${count} dans planning · Clic pour tamponner`}
+                  className={`
+                    group relative flex flex-col items-center justify-center p-1 rounded-lg border transition-all cursor-pointer select-none
+                    ${isStampActive 
+                      ? 'bg-blue-900/60 border-blue-400 ring-2 ring-blue-400 shadow-md scale-105 z-10' 
+                      : shift.hidden
+                        ? 'bg-slate-950/25 opacity-60 hover:opacity-100 border-dashed border-slate-800'
+                        : 'bg-slate-950/50 hover:bg-slate-800/80 border-slate-800 hover:border-slate-600 hover:scale-105 shadow-sm'}
+                  `}
+                >
+                  {/* Shift Code Badge */}
+                  <span
+                    className={`
+                      w-full py-1 text-center rounded font-mono-code font-bold text-xs border tracking-wider shadow-sm truncate
+                      ${style.badgeClass}
+                    `}
+                    style={style.customStyle}
+                  >
+                    {shift.code}
+                  </span>
+
+                  {/* Occurrences & Quick Indicator */}
+                  <div className="w-full flex items-center justify-between px-0.5 mt-1 text-[9px] text-slate-400">
+                    <span className="font-mono-code truncate max-w-[32px] text-slate-400 group-hover:text-slate-200">
+                      {shift.hours ? shift.hours.split('-')[0] : ''}
                     </span>
-
-                    <span className="font-medium text-slate-200 text-xs truncate max-w-[100px]">
-                      {shift.label || shift.code}
-                    </span>
-
-                    {/* Season Tag Badge */}
-                    {shift.season && shift.season !== 'all' && (
-                      <span
-                        className={`text-[9px] px-1.5 py-0.2 rounded-full border font-medium flex items-center gap-0.5 ${seasonInfo.badgeClass}`}
-                        title={`Shift de saison : ${seasonInfo.label}`}
-                      >
-                        <span>{seasonInfo.icon}</span>
-                        <span>{seasonInfo.label}</span>
+                    {count > 0 ? (
+                      <span className="px-1 bg-slate-800 group-hover:bg-slate-700 text-slate-300 rounded font-mono-code font-semibold">
+                        {count}
                       </span>
+                    ) : (
+                      <span className="text-slate-600">0</span>
                     )}
                   </div>
+                </div>
+              );
+            })}
+          </div>
+        ) : (
+          /* Detailed Cards View */
+          <div className="divide-y divide-slate-800/60 space-y-1">
+            {displayedShifts.map((shift) => {
+              const style = getShiftStyle(shift.code, shift.color);
+              const duration = calculateShiftDurationHours(shift.hours);
+              const count = shiftCounts[shift.code] || 0;
+              const isStampActive = activeStampShift === shift.code;
+              const seasonInfo = getSeasonInfo(shift.season);
 
-                  <div className="flex items-center gap-1">
-                    {/* Occurrences count */}
-                    <span
-                      className="text-[10px] font-mono-code px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 group-hover:text-slate-200"
-                      title="Nombre d'occurrences dans le planning"
-                    >
-                      {count}
-                    </span>
-
-                    {/* Action buttons: Hide/Unhide, Edit, Delete */}
-                    <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity ml-1">
-                      {/* Hide / Unhide Toggle */}
-                      <button
-                        id={`hide-toggle-shift-${shift.code}-btn`}
-                        onClick={(e) => handleToggleHideShift(shift, e)}
-                        title={shift.hidden ? 'Réafficher ce shift' : 'Masquer ce shift'}
-                        className="p-1 hover:bg-slate-700 text-slate-400 hover:text-amber-300 rounded transition-colors"
+              return (
+                <div
+                  key={shift.id}
+                  id={`shift-item-${shift.code}`}
+                  onClick={() => {
+                    if (hasActiveSelection) {
+                      onApplyShiftToSelection(shift.code);
+                    } else {
+                      onSelectStampShift(isStampActive ? null : shift.code);
+                    }
+                  }}
+                  className={`
+                    group p-2 rounded-lg border transition-all cursor-pointer text-xs flex flex-col gap-1.5 relative
+                    ${isStampActive 
+                      ? 'bg-blue-900/40 border-blue-500 ring-2 ring-blue-500 shadow-md scale-[1.01]' 
+                      : shift.hidden
+                        ? 'bg-slate-950/25 opacity-75 hover:opacity-100 border-dashed border-slate-800'
+                        : 'bg-slate-950/40 hover:bg-slate-800/60 border-slate-800/70 hover:border-slate-700'}
+                  `}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      {/* Shift Code Pill with dynamic styling */}
+                      <span
+                        className={`
+                          px-2 py-0.5 rounded font-mono-code font-bold text-xs border tracking-wide shadow-sm
+                          ${style.badgeClass}
+                        `}
+                        style={style.customStyle}
                       >
-                        {shift.hidden ? (
-                          <Eye className="w-3 h-3 text-amber-400" />
-                        ) : (
-                          <EyeOff className="w-3 h-3" />
-                        )}
-                      </button>
+                        {shift.code}
+                      </span>
 
-                      {/* Edit Button */}
-                      <button
-                        id={`edit-shift-${shift.code}-btn`}
-                        onClick={(e) => handleOpenEdit(shift, e)}
-                        title="Modifier ce shift"
-                        className="p-1 hover:bg-slate-700 text-slate-400 hover:text-blue-300 rounded transition-colors"
-                      >
-                        <Pencil className="w-3 h-3" />
-                      </button>
+                      <span className="font-medium text-slate-200 text-xs truncate max-w-[100px]">
+                        {shift.label || shift.code}
+                      </span>
 
-                      {/* Delete Button */}
-                      <button
-                        id={`delete-shift-${shift.code}-btn`}
-                        onClick={(e) => handleOpenDelete(shift, e)}
-                        title="Supprimer ce shift"
-                        className="p-1 hover:bg-rose-950/50 text-slate-400 hover:text-rose-400 rounded transition-colors"
+                      {/* Season Tag Badge */}
+                      {shift.season && shift.season !== 'all' && (
+                        <span
+                          className={`text-[9px] px-1.5 py-0.2 rounded-full border font-medium flex items-center gap-0.5 ${seasonInfo.badgeClass}`}
+                          title={`Shift de saison : ${seasonInfo.label}`}
+                        >
+                          <span>{seasonInfo.icon}</span>
+                          <span>{seasonInfo.label}</span>
+                        </span>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      {/* Occurrences count */}
+                      <span
+                        className="text-[10px] font-mono-code px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 group-hover:text-slate-200"
+                        title="Nombre d'occurrences dans le planning"
                       >
-                        <Trash2 className="w-3 h-3" />
-                      </button>
+                        {count}
+                      </span>
+
+                      {/* Action buttons: Hide/Unhide, Edit, Delete */}
+                      <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                        {/* Hide / Unhide Toggle */}
+                        <button
+                          id={`hide-toggle-shift-${shift.code}-btn`}
+                          onClick={(e) => handleToggleHideShift(shift, e)}
+                          title={shift.hidden ? 'Réafficher ce shift' : 'Masquer ce shift'}
+                          className="p-1 hover:bg-slate-700 text-slate-400 hover:text-amber-300 rounded transition-colors"
+                        >
+                          {shift.hidden ? (
+                            <Eye className="w-3 h-3 text-amber-400" />
+                          ) : (
+                            <EyeOff className="w-3 h-3" />
+                          )}
+                        </button>
+
+                        {/* Edit Button */}
+                        <button
+                          id={`edit-shift-${shift.code}-btn`}
+                          onClick={(e) => handleOpenEdit(shift, e)}
+                          title="Modifier ce shift"
+                          className="p-1 hover:bg-slate-700 text-slate-400 hover:text-blue-300 rounded transition-colors"
+                        >
+                          <Pencil className="w-3 h-3" />
+                        </button>
+
+                        {/* Delete Button */}
+                        <button
+                          id={`delete-shift-${shift.code}-btn`}
+                          onClick={(e) => handleOpenDelete(shift, e)}
+                          title="Supprimer ce shift"
+                          className="p-1 hover:bg-rose-950/50 text-slate-400 hover:text-rose-400 rounded transition-colors"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono-code">
+                    <div className="flex items-center gap-1">
+                      <Clock className="w-3 h-3 text-slate-500" />
+                      <span>{shift.hours || 'Non spécifié'}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {shift.defaultPause && (
+                        <span className="text-[10px] text-slate-500">
+                          P: {shift.defaultPause}
+                        </span>
+                      )}
+                      {duration > 0 && (
+                        <span className="text-[10px] text-slate-400 font-normal">
+                          {duration}h
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
-
-                <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono-code">
-                  <div className="flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-slate-500" />
-                    <span>{shift.hours || 'Non spécifié'}</span>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    {shift.defaultPause && (
-                      <span className="text-[10px] text-slate-500">
-                        P: {shift.defaultPause}
-                      </span>
-                    )}
-                    {duration > 0 && (
-                      <span className="text-[10px] text-slate-400 font-normal">
-                        {duration}h
-                      </span>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })
+              );
+            })}
+          </div>
         )}
       </div>
 

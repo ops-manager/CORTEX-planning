@@ -5,15 +5,18 @@ import {
   generateDateRange, 
   groupDatesByMonth, 
   formatToDateStr, 
+  parseDateStr,
   DateItem 
 } from './utils/dateUtils';
 import { deduplicateShifts } from './utils/shiftUtils';
+import { processPlanningCSV } from './utils/csvUtils';
 import { Header } from './components/Header';
 import { PlanningGrid } from './components/PlanningGrid';
 import { ShiftLegendSidebar } from './components/ShiftLegendSidebar';
 import { StatsBar } from './components/StatsBar';
-import { ContextMenu } from './components/ContextMenu';
 import { AgentManagerModal } from './components/AgentManagerModal';
+import { DateShiftExtractorModal } from './components/DateShiftExtractorModal';
+import { CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import { 
   initializeFirestoreIfNeeded, 
   resetAllDataToFirestore, 
@@ -34,6 +37,12 @@ export default function App() {
   const [planning, setPlanning] = useState<Record<string, string>>({});
   const [isFirestoreConnected, setIsFirestoreConnected] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [importNotification, setImportNotification] = useState<{
+    type: 'success' | 'error';
+    title: string;
+    details: string;
+    warnings?: string[];
+  } | null>(null);
 
   // 2. Date Navigation States
   const [centerDate, setCenterDate] = useState<Date>(() => new Date());
@@ -46,19 +55,12 @@ export default function App() {
   const [isLegendOpen, setIsLegendOpen] = useState<boolean>(true);
   const [isStatsExpanded, setIsStatsExpanded] = useState<boolean>(false);
   const [isAgentManagerOpen, setIsAgentManagerOpen] = useState<boolean>(false);
+  const [isExtractorOpen, setIsExtractorOpen] = useState<boolean>(false);
+  const [extractorTargetDate, setExtractorTargetDate] = useState<Date>(() => new Date());
 
   // 4. Undo / Redo History Stack
   const [historyStack, setHistoryStack] = useState<HistoryAction[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryAction[]>([]);
-
-  // 5. Context Menu State
-  const [contextMenu, setContextMenu] = useState<{
-    visible: boolean;
-    x: number;
-    y: number;
-    rowIndex: number;
-    colIndex: number;
-  } | null>(null);
 
   // Generate Date Horizon
   const dates: DateItem[] = useMemo(() => {
@@ -457,44 +459,84 @@ export default function App() {
     document.body.removeChild(link);
   }, [agents, dateStrings, planning, centerDate]);
 
-  // Context Menu Open
-  const handleCellContextMenu = useCallback((e: React.MouseEvent, rowIndex: number, colIndex: number) => {
-    e.preventDefault();
-    setContextMenu({
-      visible: true,
-      x: e.clientX,
-      y: e.clientY,
-      rowIndex,
-      colIndex
-    });
-    setSelectionRange({
-      startRow: rowIndex,
-      startCol: colIndex,
-      endRow: rowIndex,
-      endCol: colIndex
-    });
-  }, []);
+  // Import from CSV
+  const handleImportCSVFile = useCallback((file: File) => {
+    if (!file) return;
+    const reader = new FileReader();
 
-  // Duplicate across 7 days from context menu
-  const handleFillWeekFromContextMenu = useCallback(() => {
-    if (!contextMenu) return;
-    const agent = agents[contextMenu.rowIndex];
-    if (!agent) return;
+    reader.onload = (e) => {
+      try {
+        const text = e.target?.result as string;
+        if (!text) {
+          setImportNotification({
+            type: 'error',
+            title: 'Fichier vide',
+            details: 'Le fichier sélectionné ne contient aucun texte.'
+          });
+          return;
+        }
 
-    const sourceDate = dateStrings[contextMenu.colIndex];
-    const sourceShift = planning[`${agent.id}_${sourceDate}`] || 'M1';
+        const result = processPlanningCSV(text, agents);
 
-    const updates: Record<string, string> = {};
-    for (let i = 0; i < 7; i++) {
-      const targetCol = contextMenu.colIndex + i;
-      if (targetCol < dateStrings.length) {
-        const dStr = dateStrings[targetCol];
-        updates[`${agent.id}_${dStr}`] = sourceShift;
+        if (result.cellsCount === 0) {
+          setImportNotification({
+            type: 'error',
+            title: 'Échec de l\'importation CSV',
+            details: result.warnings[0] || 'Aucune cellule valide n\'a pu être extraite du fichier CSV.',
+            warnings: result.warnings
+          });
+          return;
+        }
+
+        // Apply imported updates
+        handleUpdatePlanning(
+          result.updates, 
+          `Importation CSV (${result.cellsCount} cellules, ${result.agentsMatchedCount} agents)`
+        );
+
+        // If imported dates are outside current view, center on imported start date
+        if (result.dateRange && result.dateRange.start) {
+          try {
+            const importStart = parseDateStr(result.dateRange.start);
+            if (!isNaN(importStart.getTime())) {
+              setCenterDate(importStart);
+            }
+          } catch {
+            // ignore date parsing edge cases
+          }
+        }
+
+        setImportNotification({
+          type: 'success',
+          title: 'Importation réussie',
+          details: `${result.cellsCount} affectations importées pour ${result.agentsMatchedCount} agent(s).${result.dateRange ? ` Période: ${result.dateRange.start} au ${result.dateRange.end}` : ''}`,
+          warnings: result.warnings.length > 0 ? result.warnings : undefined
+        });
+
+        // Auto-dismiss after 6 seconds
+        setTimeout(() => {
+          setImportNotification(prev => prev?.type === 'success' ? null : prev);
+        }, 6000);
+      } catch (err) {
+        console.error('CSV parse error:', err);
+        setImportNotification({
+          type: 'error',
+          title: 'Erreur de lecture',
+          details: 'Une erreur est survenue lors de l\'analyse du fichier CSV.'
+        });
       }
-    }
+    };
 
-    handleUpdatePlanning(updates, `Dupliquer shift ${sourceShift} sur 7 jours`);
-  }, [contextMenu, agents, dateStrings, planning, handleUpdatePlanning]);
+    reader.onerror = () => {
+      setImportNotification({
+        type: 'error',
+        title: 'Erreur de fichier',
+        details: 'Impossible de lire le fichier sélectionné.'
+      });
+    };
+
+    reader.readAsText(file, 'UTF-8');
+  }, [agents, handleUpdatePlanning]);
 
   return (
     <div id="cortex-app-root" className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
@@ -510,22 +552,60 @@ export default function App() {
         onUndo={handleUndo}
         onRedo={handleRedo}
         onAutoGeneratePattern={handleAutoGeneratePattern}
-        onClearSelection={handleClearSelection}
-        hasSelection={selectionRange !== null}
         onExportCSV={handleExportCSV}
-        isBackendConnected={true}
+        onImportCSVFile={handleImportCSVFile}
         isFirestoreConnected={isFirestoreConnected}
-        onResetDataset={handleResetToApiDataset}
         totalAgentsCount={agents.length}
-        totalShiftsAssigned={Object.keys(planning).length}
         isLegendOpen={isLegendOpen}
         onToggleLegend={() => setIsLegendOpen(!isLegendOpen)}
-        viewRangeDays={viewRangeDays}
-        onChangeViewRangeDays={(days) => setViewRangeDays(days)}
         onOpenAgentManager={() => setIsAgentManagerOpen(true)}
-        activeSeasonFilter={activeSeasonFilter}
-        onChangeSeasonFilter={setActiveSeasonFilter}
+        onOpenExtractorModal={() => {
+          setExtractorTargetDate(centerDate);
+          setIsExtractorOpen(true);
+        }}
       />
+
+      {/* Import Status Floating Notification */}
+      {importNotification && (
+        <div
+          id="csv-import-notification-banner"
+          className={`
+            fixed top-16 right-6 z-50 max-w-md p-4 rounded-xl shadow-2xl border backdrop-blur-md transition-all animate-in fade-in slide-in-from-top-2
+            ${importNotification.type === 'success'
+              ? 'bg-slate-900/95 border-emerald-500/60 text-emerald-100'
+              : 'bg-slate-900/95 border-rose-500/60 text-rose-100'}
+          `}
+        >
+          <div className="flex items-start gap-3">
+            {importNotification.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5 text-emerald-400 flex-shrink-0 mt-0.5" />
+            ) : (
+              <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 mt-0.5" />
+            )}
+            <div className="flex-1 text-xs">
+              <h4 className="font-bold text-sm text-white mb-0.5">
+                {importNotification.title}
+              </h4>
+              <p className="text-slate-300 leading-relaxed">
+                {importNotification.details}
+              </p>
+              {importNotification.warnings && importNotification.warnings.length > 0 && (
+                <div className="mt-2 pt-2 border-t border-slate-800 text-[11px] text-amber-300 space-y-0.5">
+                  {importNotification.warnings.map((w, idx) => (
+                    <div key={idx}>• {w}</div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button
+              onClick={() => setImportNotification(null)}
+              className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 2. MAIN BODY (Grid + Interactive Sidebar) */}
       <div className="flex flex-1 overflow-hidden relative">
@@ -539,9 +619,12 @@ export default function App() {
           onUpdatePlanning={handleUpdatePlanning}
           onReorderAgents={handleReorderAgents}
           activeStampShift={activeStampShift}
-          onCellContextMenu={handleCellContextMenu}
           selectionRange={selectionRange}
           onSelectionChange={setSelectionRange}
+          onOpenDateExtractor={(date) => {
+            setExtractorTargetDate(date);
+            setIsExtractorOpen(true);
+          }}
         />
 
         {/* Right Sidebar: Shift Legend with Shift CRUD */}
@@ -585,27 +668,15 @@ export default function App() {
         />
       )}
 
-      {/* 5. CONTEXT MENU */}
-      {contextMenu && contextMenu.visible && (
-        <ContextMenu
-          x={contextMenu.x}
-          y={contextMenu.y}
-          onClose={() => setContextMenu(null)}
-          onSelectShift={(code) => handleApplyShiftToSelection(code)}
-          onCopy={() => {
-            const agent = agents[contextMenu.rowIndex];
-            const dStr = dateStrings[contextMenu.colIndex];
-            const val = planning[`${agent?.id}_${dStr}`] || '';
-            navigator.clipboard.writeText(val).catch(() => {});
-          }}
-          onPaste={() => {
-            navigator.clipboard.readText().then(val => {
-              if (val) handleApplyShiftToSelection(val.trim());
-            }).catch(() => {});
-          }}
-          onClear={handleClearSelection}
-          onFillWeek={handleFillWeekFromContextMenu}
+      {/* 5. DATE SHIFTS EXTRACTOR & API TESTER MODAL */}
+      {isExtractorOpen && (
+        <DateShiftExtractorModal
+          isOpen={isExtractorOpen}
+          onClose={() => setIsExtractorOpen(false)}
+          selectedDate={extractorTargetDate}
+          agents={agents}
           shifts={shifts}
+          planning={planning}
         />
       )}
     </div>

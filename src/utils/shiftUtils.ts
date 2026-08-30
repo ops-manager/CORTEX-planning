@@ -486,6 +486,93 @@ export function computeFillUpdates(
 }
 
 /**
+ * Parse clipboard text into a 2D grid matrix
+ */
+export function parseClipboardMatrix(rawText: string): string[][] {
+  if (!rawText) return [];
+  // Normalize Windows (\r\n), Mac (\r), and Linux (\n) line endings
+  const normalized = rawText.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  // Strip only trailing empty newlines (do not strip internal empty cells)
+  const trimmedEnd = normalized.replace(/\n+$/, '');
+  if (!trimmedEnd && trimmedEnd !== '') return [];
+
+  const lines = trimmedEnd.split('\n');
+  return lines.map(line => line.split('\t'));
+}
+
+/**
+ * Format a 2D grid matrix into tab-separated and newline-separated clipboard text
+ */
+export function formatMatrixToClipboardText(matrix: string[][]): string {
+  if (!matrix || matrix.length === 0) return '';
+  return matrix.map(row => row.join('\t')).join('\n');
+}
+
+/**
+ * Compute updates to paste a 2D matrix starting at a target anchor cell or bounding area
+ */
+export function computePasteUpdates(
+  matrix: string[][],
+  targetAnchor: SelectionRange,
+  visibleAgentIds: string[],
+  dateStrings: string[]
+): { updates: Record<string, string>; targetRange: SelectionRange } {
+  const updates: Record<string, string> = {};
+  if (!matrix || matrix.length === 0 || visibleAgentIds.length === 0 || dateStrings.length === 0) {
+    return { updates, targetRange: targetAnchor };
+  }
+
+  const pasteH = matrix.length;
+  const pasteW = Math.max(...matrix.map(row => row.length), 1);
+
+  const tgtMinRow = Math.min(targetAnchor.startRow, targetAnchor.endRow);
+  const tgtMaxRow = Math.max(targetAnchor.startRow, targetAnchor.endRow);
+  const tgtMinCol = Math.min(targetAnchor.startCol, targetAnchor.endCol);
+  const tgtMaxCol = Math.max(targetAnchor.startCol, targetAnchor.endCol);
+
+  const targetH = tgtMaxRow - tgtMinRow + 1;
+  const targetW = tgtMaxCol - tgtMinCol + 1;
+
+  const applyH = Math.max(pasteH, targetH);
+  const applyW = Math.max(pasteW, targetW);
+
+  const startR = tgtMinRow;
+  const startC = tgtMinCol;
+
+  let maxUpdatedRow = startR;
+  let maxUpdatedCol = startC;
+
+  for (let r = 0; r < applyH; r++) {
+    const curRow = startR + r;
+    if (curRow >= visibleAgentIds.length) break;
+    const agentId = visibleAgentIds[curRow];
+
+    for (let c = 0; c < applyW; c++) {
+      const curCol = startC + c;
+      if (curCol >= dateStrings.length) break;
+      const dateStr = dateStrings[curCol];
+
+      const sourceRow = matrix[r % pasteH] || [];
+      const val = sourceRow[c % (sourceRow.length || pasteW)] ?? '';
+
+      updates[`${agentId}_${dateStr}`] = val.trim();
+      maxUpdatedRow = Math.max(maxUpdatedRow, curRow);
+      maxUpdatedCol = Math.max(maxUpdatedCol, curCol);
+    }
+  }
+
+  return {
+    updates,
+    targetRange: {
+      startRow: startR,
+      startCol: startC,
+      endRow: maxUpdatedRow,
+      endCol: maxUpdatedCol
+    }
+  };
+}
+
+/**
  * Deduplicate a list of shifts to ensure unique IDs and clean rendering
  */
 export function deduplicateShifts(rawShifts: Shift[]): Shift[] {

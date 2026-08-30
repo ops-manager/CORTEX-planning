@@ -1,7 +1,15 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Agent, Shift, SelectionRange, CellCoord, DragFillState } from '../types';
 import { DateItem, MonthGroup } from '../utils/dateUtils';
-import { getShiftStyle, computeFillUpdates, calculateShiftDurationHours } from '../utils/shiftUtils';
+import { 
+  getShiftStyle, 
+  computeFillUpdates, 
+  calculateShiftDurationHours,
+  parseClipboardMatrix,
+  formatMatrixToClipboardText,
+  computePasteUpdates
+} from '../utils/shiftUtils';
+import { ContextMenu } from './ContextMenu';
 import { 
   GripVertical, 
   ChevronDown, 
@@ -9,8 +17,12 @@ import {
   Search, 
   Building2, 
   X,
-  Sparkles
+  Sparkles,
+  ClipboardCheck
 } from 'lucide-react';
+
+// In-memory global clipboard buffer ensuring copy/paste works 100% reliably in all iframe/browser contexts
+let globalPlanningClipboard: { matrix: string[][]; text: string } | null = null;
 
 interface PlanningGridProps {
   agents: Agent[];
@@ -21,9 +33,10 @@ interface PlanningGridProps {
   onUpdatePlanning: (updates: Record<string, string>, actionDescription: string) => void;
   onReorderAgents: (newAgents: Agent[]) => void;
   activeStampShift: string | null;
-  onCellContextMenu: (e: React.MouseEvent, rowIndex: number, colIndex: number) => void;
+  onCellContextMenu?: (e: React.MouseEvent, rowIndex: number, colIndex: number) => void;
   selectionRange: SelectionRange | null;
   onSelectionChange: (range: SelectionRange | null) => void;
+  onOpenDateExtractor?: (date: Date) => void;
 }
 
 export const PlanningGrid: React.FC<PlanningGridProps> = ({
@@ -37,7 +50,8 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
   activeStampShift,
   onCellContextMenu,
   selectionRange,
-  onSelectionChange
+  onSelectionChange,
+  onOpenDateExtractor
 }) => {
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const [collapsedTeams, setCollapsedTeams] = useState<Record<string, boolean>>({});
@@ -64,6 +78,23 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
   const [draggedTeamName, setDraggedTeamName] = useState<string | null>(null);
   const [dropTargetAgentId, setDropTargetAgentId] = useState<string | null>(null);
   const [dropTargetTeamName, setDropTargetTeamName] = useState<string | null>(null);
+
+  // Copied cells visual feedback indicator
+  const [copiedRange, setCopiedRange] = useState<{
+    minRow: number;
+    maxRow: number;
+    minCol: number;
+    maxCol: number;
+    count: number;
+  } | null>(null);
+
+  // Context Menu State inside PlanningGrid
+  const [contextMenuState, setContextMenuState] = useState<{
+    x: number;
+    y: number;
+    rowIndex: number;
+    colIndex: number;
+  } | null>(null);
 
   // Group agents by team
   const teams = React.useMemo(() => {
@@ -167,6 +198,180 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
     return () => clearTimeout(timer);
   }, []);
 
+  // Execute Copy of current selection bounds
+  const executeCopy = useCallback(() => {
+    if (!bounds) return;
+    const matrix: string[][] = [];
+    for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+      const agentId = visibleAgentIds[r];
+      const rowVals: string[] = [];
+      for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        const dateStr = dateStrings[c];
+        rowVals.push(planning[`${agentId}_${dateStr}`] || '');
+      }
+      matrix.push(rowVals);
+    }
+    const text = formatMatrixToClipboardText(matrix);
+    globalPlanningClipboard = { matrix, text };
+
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).catch(() => {});
+      }
+    } catch {}
+
+    const count = (bounds.maxRow - bounds.minRow + 1) * (bounds.maxCol - bounds.minCol + 1);
+    setCopiedRange({ ...bounds, count });
+  }, [bounds, visibleAgentIds, dateStrings, planning]);
+
+  // Execute Paste starting from the active selection range or anchor cell
+  const executePaste = useCallback(async (explicitText?: string) => {
+    if (!selectionRange) return;
+
+    let matrix: string[][] | null = null;
+
+    if (explicitText && explicitText.length > 0) {
+      matrix = parseClipboardMatrix(explicitText);
+    } else {
+      // 1. Try browser system clipboard first
+      try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          const sysText = await navigator.clipboard.readText();
+          if (sysText && sysText.trim().length > 0) {
+            matrix = parseClipboardMatrix(sysText);
+          }
+        }
+      } catch {
+        // Fallback silently if clipboard permissions are restricted in iframe
+      }
+
+      // 2. Fallback to in-memory global clipboard if system clipboard was empty or restricted
+      if (!matrix && globalPlanningClipboard) {
+        matrix = globalPlanningClipboard.matrix;
+      }
+    }
+
+    if (!matrix || matrix.length === 0) return;
+
+    const { updates, targetRange } = computePasteUpdates(
+      matrix,
+      selectionRange,
+      visibleAgentIds,
+      dateStrings
+    );
+
+    const updateCount = Object.keys(updates).length;
+    if (updateCount > 0) {
+      onUpdatePlanning(updates, `Coller plage (${updateCount} cellules)`);
+      onSelectionChange(targetRange);
+      setCopiedRange(null);
+    }
+  }, [selectionRange, visibleAgentIds, dateStrings, onUpdatePlanning, onSelectionChange]);
+
+  // Clear current selection
+  const executeClear = useCallback(() => {
+    if (!bounds) return;
+    const updates: Record<string, string> = {};
+    for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+      const agentId = visibleAgentIds[r];
+      for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        const dateStr = dateStrings[c];
+        updates[`${agentId}_${dateStr}`] = '';
+      }
+    }
+    onUpdatePlanning(updates, 'Effacer sélection');
+  }, [bounds, visibleAgentIds, dateStrings, onUpdatePlanning]);
+
+  // Apply shift code to all selected cells
+  const executeApplyShift = useCallback((code: string) => {
+    if (!bounds) return;
+    const updates: Record<string, string> = {};
+    for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+      const agentId = visibleAgentIds[r];
+      for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+        const dateStr = dateStrings[c];
+        updates[`${agentId}_${dateStr}`] = code;
+      }
+    }
+    onUpdatePlanning(updates, `Appliquer shift ${code} (${Object.keys(updates).length} cellules)`);
+  }, [bounds, visibleAgentIds, dateStrings, onUpdatePlanning]);
+
+  // Duplicate shift across 7 days for current agent row
+  const executeFillWeek = useCallback((rowIndex: number, colIndex: number) => {
+    const agentId = visibleAgentIds[rowIndex];
+    if (!agentId) return;
+
+    const sourceDate = dateStrings[colIndex];
+    const sourceShift = planning[`${agentId}_${sourceDate}`] || 'M1';
+
+    const updates: Record<string, string> = {};
+    for (let i = 0; i < 7; i++) {
+      const targetCol = colIndex + i;
+      if (targetCol < dateStrings.length) {
+        const dStr = dateStrings[targetCol];
+        updates[`${agentId}_${dStr}`] = sourceShift;
+      }
+    }
+    onUpdatePlanning(updates, `Dupliquer shift ${sourceShift} sur 7 jours`);
+  }, [visibleAgentIds, dateStrings, planning, onUpdatePlanning]);
+
+  // Native Window Paste Listener
+  useEffect(() => {
+    function handleNativePaste(e: ClipboardEvent) {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+      if (!selectionRange) return;
+      const clipText = e.clipboardData?.getData('text/plain');
+      if (clipText) {
+        e.preventDefault();
+        executePaste(clipText);
+      }
+    }
+
+    window.addEventListener('paste', handleNativePaste);
+    return () => window.removeEventListener('paste', handleNativePaste);
+  }, [selectionRange, executePaste]);
+
+  // Native Window Copy Listener
+  useEffect(() => {
+    function handleNativeCopy(e: ClipboardEvent) {
+      if (
+        e.target instanceof HTMLInputElement ||
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+      if (!bounds) return;
+      const matrix: string[][] = [];
+      for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
+        const agentId = visibleAgentIds[r];
+        const rowVals: string[] = [];
+        for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
+          const dateStr = dateStrings[c];
+          rowVals.push(planning[`${agentId}_${dateStr}`] || '');
+        }
+        matrix.push(rowVals);
+      }
+      const text = formatMatrixToClipboardText(matrix);
+      globalPlanningClipboard = { matrix, text };
+      if (e.clipboardData) {
+        e.preventDefault();
+        e.clipboardData.setData('text/plain', text);
+      }
+      const count = (bounds.maxRow - bounds.minRow + 1) * (bounds.maxCol - bounds.minCol + 1);
+      setCopiedRange({ ...bounds, count });
+    }
+
+    window.addEventListener('copy', handleNativeCopy);
+    return () => window.removeEventListener('copy', handleNativeCopy);
+  }, [bounds, visibleAgentIds, dateStrings, planning]);
+
   // Keyboard navigation, copy, paste, delete, and direct typing
   useEffect(() => {
     function handleKeyDown(e: KeyboardEvent) {
@@ -187,74 +392,21 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
       // 1. Copy (Ctrl+C / Cmd+C)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
         e.preventDefault();
-        if (!bounds) return;
-        const rowsText: string[] = [];
-        for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
-          const agentId = visibleAgentIds[r];
-          const colsText: string[] = [];
-          for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
-            const dateStr = dateStrings[c];
-            colsText.push(planning[`${agentId}_${dateStr}`] || '');
-          }
-          rowsText.push(colsText.join('\t'));
-        }
-        const clipboardText = rowsText.join('\n');
-        navigator.clipboard.writeText(clipboardText).catch(() => {});
+        executeCopy();
         return;
       }
 
       // 2. Paste (Ctrl+V / Cmd+V)
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
         e.preventDefault();
-        navigator.clipboard.readText().then(text => {
-          if (!text) return;
-          const rows = text.split(/\r?\n/).map(row => row.split('\t'));
-          const updates: Record<string, string> = {};
-          const pasteH = rows.length;
-          const pasteW = rows[0]?.length || 1;
-
-          const targetH = bounds ? bounds.maxRow - bounds.minRow + 1 : 1;
-          const targetW = bounds ? bounds.maxCol - bounds.minCol + 1 : 1;
-
-          const applyH = Math.max(pasteH, targetH);
-          const applyW = Math.max(pasteW, targetW);
-
-          const startR = bounds ? bounds.minRow : startRow;
-          const startC = bounds ? bounds.minCol : startCol;
-
-          for (let r = 0; r < applyH; r++) {
-            const curRow = startR + r;
-            if (curRow > maxR) break;
-            const agentId = visibleAgentIds[curRow];
-
-            for (let c = 0; c < applyW; c++) {
-              const curCol = startC + c;
-              if (curCol > maxC) break;
-              const dateStr = dateStrings[curCol];
-
-              const val = rows[r % pasteH]?.[c % pasteW] || '';
-              updates[`${agentId}_${dateStr}`] = val.trim();
-            }
-          }
-
-          onUpdatePlanning(updates, `Coller plage (${Object.keys(updates).length} cellules)`);
-        }).catch(() => {});
+        executePaste();
         return;
       }
 
       // 3. Delete / Backspace -> Clear selection
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
-        if (!bounds) return;
-        const updates: Record<string, string> = {};
-        for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
-          const agentId = visibleAgentIds[r];
-          for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
-            const dateStr = dateStrings[c];
-            updates[`${agentId}_${dateStr}`] = '';
-          }
-        }
-        onUpdatePlanning(updates, 'Effacer le contenu sélectionné');
+        executeClear();
         return;
       }
 
@@ -311,18 +463,8 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
           shifts.find(s => s.code.toLowerCase() === newBuf.toLowerCase());
 
         if (matchedShift) {
-          if (bounds) {
-            const updates: Record<string, string> = {};
-            for (let r = bounds.minRow; r <= bounds.maxRow; r++) {
-              const agentId = visibleAgentIds[r];
-              for (let c = bounds.minCol; c <= bounds.maxCol; c++) {
-                const dateStr = dateStrings[c];
-                updates[`${agentId}_${dateStr}`] = matchedShift.code;
-              }
-            }
-            onUpdatePlanning(updates, `Saisie directe: ${matchedShift.code}`);
-            setTypingBuffer('');
-          }
+          executeApplyShift(matchedShift.code);
+          setTypingBuffer('');
         }
       }
     }
@@ -339,7 +481,10 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
     planning, 
     shifts, 
     typingBuffer, 
-    onUpdatePlanning, 
+    executeCopy,
+    executePaste,
+    executeClear,
+    executeApplyShift,
     onSelectionChange
   ]);
 
@@ -692,15 +837,30 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                   <th
                     key={d.dateStr}
                     id={`header-day-${d.dateStr}`}
+                    onClick={() => {
+                      // Select entire column
+                      onSelectionChange({
+                        startRow: 0,
+                        startCol: colIdx,
+                        endRow: Math.max(0, visibleAgents.length - 1),
+                        endCol: colIdx
+                      });
+                    }}
+                    onDoubleClick={() => {
+                      if (onOpenDateExtractor) {
+                        onOpenDateExtractor(d.date);
+                      }
+                    }}
+                    title={`Cliquez pour sélectionner la colonne, double-cliquez pour extraire les shifts du ${d.dateStr}`}
                     className={`
-                      w-11 min-w-[44px] max-w-[44px] text-center border-r border-slate-800/80 p-0 font-medium transition-all
+                      w-11 min-w-[44px] max-w-[44px] text-center border-r border-slate-800/80 p-0 font-medium transition-all cursor-pointer select-none
                       ${isSelectedInCol 
                         ? 'bg-blue-950/90 text-blue-200 border-b-2 border-b-blue-400 font-bold shadow-inner' 
                         : d.isToday 
                           ? 'bg-blue-950/40 border-b-2 border-b-blue-500' 
                           : d.isWeekend 
-                            ? 'bg-slate-950/80' 
-                            : 'bg-slate-900'}
+                            ? 'bg-slate-950/80 hover:bg-slate-800/60' 
+                            : 'bg-slate-900 hover:bg-slate-800/60'}
                     `}
                   >
                     <div className="flex flex-col items-center justify-center py-1">
@@ -903,13 +1063,56 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                             colIndex >= Math.min(fillState.targetRange.startCol, fillState.targetRange.endCol) &&
                             colIndex <= Math.max(fillState.targetRange.startCol, fillState.targetRange.endCol);
 
+                          // Inside copied source range (Marching ants animation)
+                          const isInCopiedSource = copiedRange &&
+                            rowIndex >= copiedRange.minRow &&
+                            rowIndex <= copiedRange.maxRow &&
+                            colIndex >= copiedRange.minCol &&
+                            colIndex <= copiedRange.maxCol;
+
                           return (
                             <td
                               key={d.dateStr}
                               id={`cell-${agent.id}-${d.dateStr}`}
                               onMouseDown={(e) => handleCellMouseDown(rowIndex, colIndex, e)}
                               onMouseEnter={() => handleCellMouseEnter(rowIndex, colIndex)}
-                              onContextMenu={(e) => onCellContextMenu(e, rowIndex, colIndex)}
+                              onContextMenu={(e) => {
+                                e.preventDefault();
+                                e.stopPropagation();
+                                
+                                // Retain multi-selection if clicking inside already selected bounds
+                                let preserveSelection = false;
+                                if (bounds) {
+                                  if (
+                                    rowIndex >= bounds.minRow &&
+                                    rowIndex <= bounds.maxRow &&
+                                    colIndex >= bounds.minCol &&
+                                    colIndex <= bounds.maxCol
+                                  ) {
+                                    preserveSelection = true;
+                                  }
+                                }
+
+                                if (!preserveSelection) {
+                                  onSelectionChange({
+                                    startRow: rowIndex,
+                                    startCol: colIndex,
+                                    endRow: rowIndex,
+                                    endCol: colIndex
+                                  });
+                                }
+
+                                setContextMenuState({
+                                  x: e.clientX,
+                                  y: e.clientY,
+                                  rowIndex,
+                                  colIndex
+                                });
+
+                                if (onCellContextMenu) {
+                                  onCellContextMenu(e, rowIndex, colIndex);
+                                }
+                              }}
                               className={`
                                 relative text-center p-0 cursor-pointer select-none transition-colors
                                 ${d.isWeekend ? 'bg-slate-950/60' : 'bg-slate-950/20'}
@@ -921,6 +1124,7 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                                 ${isLeftEdge ? 'border-l-2 border-l-blue-400' : 'border-l border-l-slate-800/80'}
                                 ${isRightEdge ? 'border-r-2 border-r-blue-400' : 'border-r border-r-slate-800/80'}
                                 ${isInFillTarget ? 'marching-ants bg-blue-600/40 ring-2 ring-dashed ring-cyan-400 z-20' : ''}
+                                ${isInCopiedSource ? 'ring-2 ring-dashed ring-emerald-400 z-20 bg-emerald-950/30' : ''}
                               `}
                             >
                               <div className="w-full h-full min-h-[34px] flex items-center justify-center px-0.5">
@@ -974,6 +1178,24 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
         </div>
       )}
 
+      {/* Floating Copied Cells Feedback Indicator */}
+      {copiedRange && (
+        <div
+          id="clipboard-status-badge"
+          className="fixed bottom-14 right-6 bg-slate-900/95 border border-emerald-500/60 shadow-2xl px-3.5 py-2 rounded-xl text-xs flex items-center gap-2.5 z-40 font-mono-code text-emerald-200 backdrop-blur-md"
+        >
+          <ClipboardCheck className="w-4 h-4 text-emerald-400 flex-shrink-0 animate-bounce" />
+          <span><strong>{copiedRange.count}</strong> cellule(s) copiée(s) · Clic sur destination puis <strong>Ctrl+V</strong> (ou Coller)</span>
+          <button
+            onClick={() => setCopiedRange(null)}
+            className="ml-1 p-0.5 text-slate-400 hover:text-white rounded hover:bg-slate-800"
+            title="Masquer l'indicateur"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Typing buffer indicator floating badge */}
       {typingBuffer && (
         <div
@@ -983,6 +1205,42 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
           <span>Saisie en cours :</span>
           <span className="bg-slate-900 px-2 py-0.5 rounded text-amber-300">{typingBuffer}</span>
         </div>
+      )}
+
+      {/* Internal Full-Featured Context Menu */}
+      {contextMenuState && (
+        <ContextMenu
+          x={contextMenuState.x}
+          y={contextMenuState.y}
+          onClose={() => setContextMenuState(null)}
+          onSelectShift={(code) => {
+            executeApplyShift(code);
+            setContextMenuState(null);
+          }}
+          onCopy={() => {
+            executeCopy();
+            setContextMenuState(null);
+          }}
+          onPaste={() => {
+            executePaste();
+            setContextMenuState(null);
+          }}
+          onClear={() => {
+            executeClear();
+            setContextMenuState(null);
+          }}
+          onFillWeek={() => {
+            executeFillWeek(contextMenuState.rowIndex, contextMenuState.colIndex);
+            setContextMenuState(null);
+          }}
+          onExtractDateShifts={() => {
+            const dateItem = dates[contextMenuState.colIndex];
+            if (dateItem && onOpenDateExtractor) {
+              onOpenDateExtractor(dateItem.date);
+            }
+          }}
+          shifts={shifts}
+        />
       )}
     </div>
   );

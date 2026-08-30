@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Shift } from '../types';
 import { getShiftStyle } from '../utils/shiftUtils';
-import { Copy, Clipboard, Trash2, Calendar, Coffee, Plane, RefreshCw, X } from 'lucide-react';
+import { Copy, Clipboard, Trash2, Calendar, Coffee, Plane, RefreshCw, X, Code2 } from 'lucide-react';
 
 interface ContextMenuProps {
   x: number;
@@ -12,6 +12,7 @@ interface ContextMenuProps {
   onPaste: () => void;
   onClear: () => void;
   onFillWeek: () => void;
+  onExtractDateShifts?: () => void;
   shifts: Shift[];
 }
 
@@ -24,6 +25,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onPaste,
   onClear,
   onFillWeek,
+  onExtractDateShifts,
   shifts
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -132,6 +134,22 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             <span>Dupliquer sur 7 jours</span>
           </div>
         </button>
+
+        {onExtractDateShifts && (
+          <button
+            id="context-extract-shifts-btn"
+            onClick={() => {
+              onExtractDateShifts();
+              onClose();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg hover:bg-blue-950/50 text-blue-300 hover:text-white transition-colors border-t border-slate-800/80 mt-1"
+          >
+            <div className="flex items-center gap-2">
+              <Code2 className="w-3.5 h-3.5 text-blue-400" />
+              <span>Extraire shifts date (API/JSON)</span>
+            </div>
+          </button>
+        )}
 
         <button
           id="context-clear-btn"

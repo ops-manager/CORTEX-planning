@@ -94,7 +94,7 @@ let agentsState: Agent[] = [...defaultAgents];
 let shiftsState: Shift[] = [...defaultShifts];
 let planningState: Record<string, string> = {};
 
-// Load agents and shifts directly from Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d
+// Load agents, shifts and planning directly from Firestore
 async function loadFromFirestore() {
   try {
     const [agentsSnap, shiftsSnap, planningSnap] = await Promise.all([
@@ -110,7 +110,6 @@ async function loadFromFirestore() {
       });
       loadedAgents.sort((a, b) => (a.order || 0) - (b.order || 0));
       agentsState = loadedAgents;
-      console.log(`Loaded ${agentsState.length} agents from Firestore database: ${firebaseConfig.firestoreDatabaseId}`);
     }
 
     if (!shiftsSnap.empty) {
@@ -133,41 +132,326 @@ async function loadFromFirestore() {
       }
       loadedShifts.sort((a, b) => (a.order || 0) - (b.order || 0));
       shiftsState = loadedShifts;
-      console.log(`Loaded ${shiftsState.length} shifts from Firestore database: ${firebaseConfig.firestoreDatabaseId}`);
     }
 
     if (!planningSnap.empty) {
       const docData = planningSnap.docs.find(d => d.id === 'current');
       if (docData && docData.data().assignments) {
         planningState = docData.data().assignments;
-        console.log(`Loaded ${Object.keys(planningState).length} assignments from Firestore`);
       }
     }
   } catch (err) {
-    console.warn(`Could not load from Firestore database ${firebaseConfig.firestoreDatabaseId}, using fallback:`, err);
+    console.warn(`Could not load from Firestore database ${firebaseConfig.firestoreDatabaseId}, using memory cache:`, err);
   }
+}
+
+/**
+ * Normalizes input date strings (e.g. "2026-08-25", "25/08/2026", "today") to standard "YYYY-MM-DD"
+ */
+function normalizeDateParam(input?: string): string {
+  const now = new Date();
+  if (!input || input.trim() === "" || input.toLowerCase() === "today" || input.toLowerCase() === "ajourdhui") {
+    const yyyy = now.getFullYear();
+    const mm = String(now.getMonth() + 1).padStart(2, "0");
+    const dd = String(now.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  const clean = input.trim();
+
+  // Check YYYY-MM-DD
+  const ymdMatch = clean.match(/^(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})$/);
+  if (ymdMatch) {
+    const yyyy = ymdMatch[1];
+    const mm = ymdMatch[2].padStart(2, "0");
+    const dd = ymdMatch[3].padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // Check DD/MM/YYYY
+  const dmyMatch = clean.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{4})$/);
+  if (dmyMatch) {
+    const dd = dmyMatch[1].padStart(2, "0");
+    const mm = dmyMatch[2].padStart(2, "0");
+    const yyyy = dmyMatch[3];
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  const d = new Date(clean);
+  if (!isNaN(d.getTime())) {
+    const yyyy = d.getFullYear();
+    const mm = String(d.getMonth() + 1).padStart(2, "0");
+    const dd = String(d.getDate()).padStart(2, "0");
+    return `${yyyy}-${mm}-${dd}`;
+  }
+
+  // Fallback to today
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, "0");
+  const dd = String(now.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+const FRENCH_DAYS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+
+/**
+ * Builds full daily assignments report for a specific date
+ */
+function buildDailyAssignmentsReport(
+  dateStr: string,
+  options?: { team?: string; station?: string }
+) {
+  const [yyyy, mm, dd] = dateStr.split("-").map(Number);
+  const targetDate = new Date(yyyy, mm - 1, dd);
+  const dayName = FRENCH_DAYS[targetDate.getDay()] || "Inconnu";
+
+  // Build shift dictionary for quick lookup
+  const shiftByCode = new Map<string, Shift>();
+  shiftsState.forEach(s => {
+    if (s.code) {
+      shiftByCode.set(s.code.toLowerCase(), s);
+    }
+  });
+
+  // Filter agents if specified
+  let targetAgents = [...agentsState];
+  if (options?.team) {
+    const teamFilter = options.team.toLowerCase().trim();
+    targetAgents = targetAgents.filter(a => (a.team || "").toLowerCase() === teamFilter);
+  }
+  if (options?.station) {
+    const stationFilter = options.station.toLowerCase().trim();
+    targetAgents = targetAgents.filter(a => (a.station || "").toLowerCase() === stationFilter);
+  }
+
+  let totalAssigned = 0;
+  let totalWorking = 0;
+  let totalOff = 0;
+  const shiftCounts: Record<string, number> = {};
+  const compactMap: Record<string, string> = {};
+
+  const assignments = targetAgents.map(agent => {
+    const key = `${agent.id}_${dateStr}`;
+    const shiftCode = planningState[key] || "";
+
+    if (shiftCode) {
+      totalAssigned++;
+      shiftCounts[shiftCode] = (shiftCounts[shiftCode] || 0) + 1;
+      compactMap[agent.name] = shiftCode;
+    } else {
+      compactMap[agent.name] = "";
+    }
+
+    const shiftMeta = shiftByCode.get(shiftCode.toLowerCase());
+    const isOffCode = ["OFF", "RH", "CA", "CP", "RC", "R", "ABS", "MAL"].includes(shiftCode.toUpperCase()) ||
+      (shiftMeta?.hours === "00:00 - 00:00");
+
+    if (shiftCode) {
+      if (isOffCode) {
+        totalOff++;
+      } else {
+        totalWorking++;
+      }
+    }
+
+    let startTime = "";
+    let endTime = "";
+    if (shiftMeta?.hours && shiftMeta.hours.includes("-")) {
+      const parts = shiftMeta.hours.split("-").map(p => p.trim());
+      startTime = parts[0] || "";
+      endTime = parts[1] || "";
+    }
+
+    return {
+      agentId: agent.id,
+      agentName: agent.name,
+      station: agent.station || "",
+      team: agent.team || "",
+      order: agent.order ?? 0,
+      shiftCode: shiftCode,
+      shiftLabel: shiftMeta?.label || (shiftCode ? shiftCode : "Non assigné"),
+      hours: shiftMeta?.hours || (isOffCode ? "00:00 - 00:00" : ""),
+      startTime,
+      endTime,
+      defaultPause: shiftMeta?.defaultPause || "",
+      isOff: isOffCode
+    };
+  });
+
+  return {
+    date: dateStr,
+    dayName,
+    isoTimestamp: targetDate.toISOString(),
+    totalAgents: targetAgents.length,
+    totalAssigned,
+    totalWorking,
+    totalOff,
+    shiftCounts,
+    compact: compactMap,
+    assignments
+  };
 }
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  app.use(express.json());
-
-  // Trigger non-blocking Firestore sync
-  loadFromFirestore();
-
-  // 1. Health Check endpoint: GET /api/health -> { status: "ok" }
-  app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+  // CORS Headers for seamless integration with external apps
+  app.use((req, res, next) => {
+    res.setHeader("Access-Control-Allow-Origin", "*");
+    res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
+    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
+    if (req.method === "OPTIONS") {
+      return res.sendStatus(204);
+    }
+    next();
   });
 
-  // 2. Get All Agents: GET /api/agents
+  app.use(express.json());
+
+  // Trigger non-blocking Firestore sync at server start
+  loadFromFirestore();
+
+  // 1. Health Check
+  app.get("/api/health", (req, res) => {
+    res.json({ 
+      status: "ok", 
+      agentsCount: agentsState.length, 
+      shiftsCount: shiftsState.length, 
+      assignmentsCount: Object.keys(planningState).length 
+    });
+  });
+
+  // 2. Fetch Daily Shift Assignments (PRIMARY ENDPOINT requested by user)
+  // Supports: /api/shifts/daily?date=2026-08-25, /api/planning/daily, /api/planning/date/:date
+  const handleDailyShiftRequest = async (req: express.Request, res: express.Response) => {
+    try {
+      // Refresh planning state from Firestore if available
+      await loadFromFirestore();
+
+      const rawDate = (req.params.date || req.query.date || req.query.d) as string | undefined;
+      const dateStr = normalizeDateParam(rawDate);
+      const team = req.query.team as string | undefined;
+      const station = req.query.station as string | undefined;
+      const format = (req.query.format as string || "json").toLowerCase();
+
+      const report = buildDailyAssignmentsReport(dateStr, { team, station });
+
+      if (format === "compact") {
+        return res.json({
+          date: report.date,
+          dayName: report.dayName,
+          assignments: report.compact
+        });
+      }
+
+      if (format === "csv") {
+        const csvHeader = "ID Agent;Nom Agent;Equipe;Station;Date;Code Shift;Horaires;Pause;Statut\n";
+        const csvRows = report.assignments.map(a => 
+          `"${a.agentId}";"${a.agentName}";"${a.team}";"${a.station}";"${report.date}";"${a.shiftCode}";"${a.hours}";"${a.defaultPause}";"${a.isOff ? 'Repos/Congé' : 'Actif'}"`
+        ).join("\n");
+        res.setHeader("Content-Type", "text/csv; charset=utf-8");
+        res.setHeader("Content-Disposition", `attachment; filename="cortex-shifts-${dateStr}.csv"`);
+        return res.send(csvHeader + csvRows);
+      }
+
+      return res.json(report);
+    } catch (err: any) {
+      console.error("Error generating daily shift report:", err);
+      res.status(500).json({ error: err.message || "Failed to fetch daily shifts" });
+    }
+  };
+
+  // Main daily routes
+  app.get("/api/shifts/daily", handleDailyShiftRequest);
+  app.get("/api/planning/daily", handleDailyShiftRequest);
+  app.get("/api/planning/date/:date", handleDailyShiftRequest);
+  app.get("/api/shifts/date/:date", handleDailyShiftRequest);
+
+  // 3. Range Endpoint: GET /api/planning/range?startDate=2026-08-25&endDate=2026-08-31
+  app.get("/api/planning/range", async (req, res) => {
+    try {
+      await loadFromFirestore();
+      const startStr = normalizeDateParam(req.query.startDate as string);
+      const endStr = normalizeDateParam(req.query.endDate as string || startStr);
+      const team = req.query.team as string | undefined;
+      const station = req.query.station as string | undefined;
+
+      const [sy, sm, sd] = startStr.split("-").map(Number);
+      const [ey, em, ed] = endStr.split("-").map(Number);
+      const startDate = new Date(sy, sm - 1, sd);
+      const endDate = new Date(ey, em - 1, ed);
+
+      const daysReports = [];
+      const cur = new Date(startDate);
+      while (cur <= endDate) {
+        const yyyy = cur.getFullYear();
+        const mm = String(cur.getMonth() + 1).padStart(2, "0");
+        const dd = String(cur.getDate()).padStart(2, "0");
+        const dStr = `${yyyy}-${mm}-${dd}`;
+        daysReports.push(buildDailyAssignmentsReport(dStr, { team, station }));
+        cur.setDate(cur.getDate() + 1);
+      }
+
+      res.json({
+        startDate: startStr,
+        endDate: endStr,
+        totalDays: daysReports.length,
+        days: daysReports
+      });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4. OpenAPI / API Integration Documentation endpoint
+  app.get("/api/docs", (req, res) => {
+    res.json({
+      title: "CORTEX Operations Planning API",
+      version: "1.0.0",
+      description: "API REST pour extraire les shifts et plannings assignés aux agents.",
+      endpoints: [
+        {
+          method: "GET",
+          path: "/api/shifts/daily",
+          description: "Récupère tous les shifts assignés aux agents pour une date donnée.",
+          parameters: [
+            { name: "date", type: "string", description: "Date au format YYYY-MM-DD ou DD/MM/YYYY (défaut: aujourd'hui)" },
+            { name: "team", type: "string", description: "Filtrer par équipe (ex: Paris, Nice)" },
+            { name: "station", type: "string", description: "Filtrer par station (ex: JS, RC, ABN)" },
+            { name: "format", type: "string", description: "Format de sortie: 'json' (défaut), 'compact', 'csv'" }
+          ],
+          example: "/api/shifts/daily?date=2026-08-25"
+        },
+        {
+          method: "GET",
+          path: "/api/planning/date/:date",
+          description: "Alias avec date dans l'URL (ex: /api/planning/date/2026-08-25)"
+        },
+        {
+          method: "GET",
+          path: "/api/planning/range",
+          description: "Récupère les shifts sur une période de dates (startDate et endDate)"
+        },
+        {
+          method: "GET",
+          path: "/api/agents",
+          description: "Liste tous les agents"
+        },
+        {
+          method: "GET",
+          path: "/api/shifts",
+          description: "Liste tous les types de shifts définis et leurs horaires"
+        }
+      ]
+    });
+  });
+
+  // 5. Agent CRUD APIs
   app.get("/api/agents", (req, res) => {
     res.json(agentsState);
   });
 
-  // Create Agent: POST /api/agents
   app.post("/api/agents", async (req, res) => {
     try {
       const newAgent: Agent = req.body;
@@ -175,7 +459,6 @@ async function startServer() {
         newAgent.id = "agent_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
       }
       agentsState.push(newAgent);
-      // Sync to Firestore
       const agentRef = doc(firestoreDb, 'agents', newAgent.id);
       await setDoc(agentRef, newAgent);
       res.status(201).json(newAgent);
@@ -184,7 +467,6 @@ async function startServer() {
     }
   });
 
-  // Update Agent: PUT /api/agents/:id
   app.put("/api/agents/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -198,7 +480,6 @@ async function startServer() {
     }
   });
 
-  // Delete Agent: DELETE /api/agents/:id
   app.delete("/api/agents/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -211,12 +492,11 @@ async function startServer() {
     }
   });
 
-  // 3. Get All Shifts: GET /api/shifts
+  // 6. Shift Definitions APIs
   app.get("/api/shifts", (req, res) => {
     res.json(shiftsState);
   });
 
-  // Create Shift: POST /api/shifts
   app.post("/api/shifts", async (req, res) => {
     try {
       const newShift: Shift = req.body;
@@ -233,7 +513,6 @@ async function startServer() {
     }
   });
 
-  // Update Shift: PUT /api/shifts/:id
   app.put("/api/shifts/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -247,7 +526,6 @@ async function startServer() {
     }
   });
 
-  // Delete Shift: DELETE /api/shifts/:id
   app.delete("/api/shifts/:id", async (req, res) => {
     try {
       const { id } = req.params;
@@ -260,25 +538,15 @@ async function startServer() {
     }
   });
 
-  // 4. Force Live Re-fetch from Firestore: POST /api/sync-live
+  // 7. Sync and Global Planning State
   app.post("/api/sync-live", async (req, res) => {
     await loadFromFirestore();
-    res.json({ success: true, agentsCount: agentsState.length, shiftsCount: shiftsState.length });
-  });
-
-  // Auxiliary API endpoints for updates
-  app.post("/api/agents/reorder", (req, res) => {
-    if (Array.isArray(req.body.agents)) {
-      agentsState = req.body.agents;
-    }
-    res.json({ success: true, agents: agentsState });
-  });
-
-  app.post("/api/agents/reset", (req, res) => {
-    agentsState = [...defaultAgents];
-    shiftsState = [...defaultShifts];
-    planningState = {};
-    res.json({ success: true, agents: agentsState, shifts: shiftsState });
+    res.json({ 
+      success: true, 
+      agentsCount: agentsState.length, 
+      shiftsCount: shiftsState.length,
+      assignmentsCount: Object.keys(planningState).length
+    });
   });
 
   app.get("/api/planning", (req, res) => {
@@ -313,3 +581,4 @@ async function startServer() {
 }
 
 startServer();
+

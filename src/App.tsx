@@ -16,8 +16,11 @@ import { ShiftLegendSidebar } from './components/ShiftLegendSidebar';
 import { StatsBar } from './components/StatsBar';
 import { AgentManagerModal } from './components/AgentManagerModal';
 import { DateShiftExtractorModal } from './components/DateShiftExtractorModal';
+import { LoginPage } from './components/LoginPage';
 import { CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import { 
+  auth,
+  logoutUser,
   initializeFirestoreIfNeeded, 
   resetAllDataToFirestore, 
   savePlanningToFirestore, 
@@ -29,8 +32,79 @@ import {
   updateShiftInFirestore,
   deleteShiftFromFirestore
 } from './firebase';
+import { onAuthStateChanged, User } from 'firebase/auth';
 
 export default function App() {
+  // 0. User Authentication State
+  const [currentUser, setCurrentUser] = useState<{
+    uid: string;
+    email?: string | null;
+    displayName?: string | null;
+    photoURL?: string | null;
+  } | null>(() => {
+    try {
+      const cached = sessionStorage.getItem('cortex_user_session');
+      return cached ? JSON.parse(cached) : null;
+    } catch {
+      return null;
+    }
+  });
+  const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+
+  // Auth State Listener
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, (user) => {
+      if (user) {
+        const u = {
+          uid: user.uid,
+          email: user.email,
+          displayName: user.displayName || user.email?.split('@')[0] || 'Utilisateur',
+          photoURL: user.photoURL || undefined
+        };
+        setCurrentUser(u);
+        try {
+          sessionStorage.setItem('cortex_user_session', JSON.stringify(u));
+        } catch (e) {
+          console.warn('Session storage write error:', e);
+        }
+      } else {
+        // If not in Firebase Auth and no demo session active, set to null
+        const sessionActive = sessionStorage.getItem('cortex_user_session');
+        if (!sessionActive) {
+          setCurrentUser(null);
+        }
+      }
+      setIsAuthChecking(false);
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const handleLogout = useCallback(async () => {
+    try {
+      sessionStorage.removeItem('cortex_user_session');
+      setCurrentUser(null);
+      await logoutUser();
+    } catch (err) {
+      console.warn('Logout warning:', err);
+    }
+  }, []);
+
+  const handleLoginSuccess = useCallback((user: User | { uid: string; email: string; displayName: string; photoURL?: string }) => {
+    const userData = {
+      uid: user.uid,
+      email: user.email,
+      displayName: user.displayName || user.email?.split('@')[0] || 'Utilisateur',
+      photoURL: user.photoURL || undefined
+    };
+    setCurrentUser(userData);
+    try {
+      sessionStorage.setItem('cortex_user_session', JSON.stringify(userData));
+    } catch (e) {
+      console.warn('Session storage write error:', e);
+    }
+  }, []);
+
   // 1. Backend & Data States
   const [agents, setAgents] = useState<Agent[]>(API_IMPORTED_AGENTS);
   const [shifts, setShifts] = useState<Shift[]>(API_IMPORTED_SHIFTS);
@@ -538,6 +612,28 @@ export default function App() {
     reader.readAsText(file, 'UTF-8');
   }, [agents, handleUpdatePlanning]);
 
+  // Loading Screen while checking Authentication status
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen w-full bg-slate-950 flex flex-col items-center justify-center text-slate-100 selection:bg-blue-600">
+        <div className="relative flex flex-col items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-gradient-to-tr from-blue-600 to-indigo-600 flex items-center justify-center shadow-xl shadow-blue-500/20 border border-blue-400/30 animate-pulse">
+            <span className="font-bold text-xl font-mono text-white">C</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <div className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-400 rounded-full animate-spin" />
+            <span className="text-xs text-slate-400 font-medium">Vérification de session...</span>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // Not logged in -> Show Login Page
+  if (!currentUser) {
+    return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  }
+
   return (
     <div id="cortex-app-root" className="flex flex-col h-screen w-screen bg-slate-950 text-slate-100 overflow-hidden font-sans">
       {/* 1. TOP HEADER */}
@@ -563,6 +659,8 @@ export default function App() {
           setExtractorTargetDate(centerDate);
           setIsExtractorOpen(true);
         }}
+        currentUser={currentUser}
+        onLogout={handleLogout}
       />
 
       {/* Import Status Floating Notification */}

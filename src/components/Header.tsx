@@ -14,7 +14,9 @@ import {
   Activity, 
   Database,
   Users,
-  Code2
+  Code2,
+  LogOut,
+  User as UserIcon
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -38,6 +40,13 @@ interface HeaderProps {
   onToggleLegend: () => void;
   onOpenAgentManager: () => void;
   onOpenExtractorModal?: () => void;
+  currentUser?: {
+    uid?: string;
+    email?: string | null;
+    displayName?: string | null;
+    photoURL?: string | null;
+  } | null;
+  onLogout?: () => void;
   viewRangeDays?: number;
   onChangeViewRangeDays?: (days: number) => void;
   activeSeasonFilter?: ShiftSeason;
@@ -65,7 +74,9 @@ export const Header: React.FC<HeaderProps> = ({
   isLegendOpen,
   onToggleLegend,
   onOpenAgentManager,
-  onOpenExtractorModal
+  onOpenExtractorModal,
+  currentUser,
+  onLogout
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -270,6 +281,48 @@ export const Header: React.FC<HeaderProps> = ({
           <Layers className="w-3.5 h-3.5" />
           <span className="hidden lg:inline">Légende</span>
         </button>
+
+        {/* User Profile & Logout */}
+        {currentUser && (
+          <div className="flex items-center gap-2 pl-2 border-l border-slate-800 ml-1">
+            <div 
+              className="flex items-center gap-2 px-2 py-1 rounded-lg bg-slate-950/80 border border-slate-800/80 max-w-[160px] sm:max-w-[200px]"
+              title={currentUser.email || currentUser.displayName || 'Utilisateur connecté'}
+            >
+              {currentUser.photoURL ? (
+                <img 
+                  src={currentUser.photoURL} 
+                  alt="Avatar" 
+                  referrerPolicy="no-referrer"
+                  className="w-5 h-5 rounded-full object-cover border border-blue-400/40"
+                />
+              ) : (
+                <div className="w-5 h-5 rounded-full bg-gradient-to-tr from-blue-600 to-indigo-500 flex items-center justify-center text-[10px] font-bold text-white flex-shrink-0">
+                  {currentUser.displayName ? currentUser.displayName.charAt(0).toUpperCase() : (currentUser.email ? currentUser.email.charAt(0).toUpperCase() : 'U')}
+                </div>
+              )}
+              <div className="flex flex-col min-w-0">
+                <span className="text-[11px] font-semibold text-slate-200 truncate leading-none">
+                  {currentUser.displayName || currentUser.email?.split('@')[0] || 'Utilisateur'}
+                </span>
+                <span className="text-[9px] text-blue-400 font-mono leading-none mt-0.5 truncate">
+                  {currentUser.email ? currentUser.email : 'Connecté'}
+                </span>
+              </div>
+            </div>
+
+            {onLogout && (
+              <button
+                id="header-logout-btn"
+                onClick={onLogout}
+                title="Se déconnecter de CORTEX Planning"
+                className="p-1.5 rounded-lg bg-slate-800/80 hover:bg-rose-950/60 text-slate-400 hover:text-rose-300 border border-slate-700/80 hover:border-rose-700/60 transition-colors"
+              >
+                <LogOut className="w-4 h-4" />
+              </button>
+            )}
+          </div>
+        )}
       </div>
     </header>
   );

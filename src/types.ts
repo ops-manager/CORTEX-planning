@@ -66,3 +66,15 @@ export interface DailyCoverage {
   leaves: number;
   totalActive: number;
 }
+
+export interface ApiToken {
+  id: string;
+  name: string;
+  token: string;
+  prefix: string;
+  createdAt: string;
+  lastUsedAt?: string;
+  createdBy?: string;
+  expiresAt?: string;
+  isActive: boolean;
+}

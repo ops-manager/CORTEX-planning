@@ -41,6 +41,23 @@
         "assignments": { "type": "object" },
         "updatedAt": { "type": "string" }
       }
+    },
+    "ApiToken": {
+      "title": "API Token",
+      "description": "Authentication token for REST API endpoints",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "token": { "type": "string" },
+        "prefix": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "lastUsedAt": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "expiresAt": { "type": "string" },
+        "isActive": { "type": "boolean" }
+      },
+      "required": ["id", "name", "token", "prefix", "createdAt", "isActive"]
     }
   },
   "firestore": {
@@ -55,6 +72,10 @@
     "planning": {
       "entity": "PlanningDoc",
       "description": "Planning state persistence"
+    },
+    "api_tokens": {
+      "entity": "ApiToken",
+      "description": "Collection of authorized API tokens"
     }
   }
 }

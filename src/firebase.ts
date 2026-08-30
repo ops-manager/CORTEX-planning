@@ -8,8 +8,18 @@ import {
   deleteDoc,
   writeBatch
 } from 'firebase/firestore';
+import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  signOut,
+  onAuthStateChanged,
+  User
+} from 'firebase/auth';
 import firebaseConfig from '../firebase-applet-config.json';
-import { Agent, Shift } from './types';
+import { Agent, Shift, ApiToken } from './types';
 import { API_IMPORTED_AGENTS, API_IMPORTED_SHIFTS, generateInitialSchedule } from './data/mockData';
 
 // Initialize Firebase App
@@ -20,9 +30,76 @@ export const db = firebaseConfig.firestoreDatabaseId
   ? getFirestore(app, firebaseConfig.firestoreDatabaseId)
   : getFirestore(app);
 
+// Initialize Firebase Authentication
+export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+/**
+ * Sign in with Google Popup
+ */
+export async function signInWithGoogle(): Promise<User> {
+  try {
+    const result = await signInWithPopup(auth, googleProvider);
+    return result.user;
+  } catch (error) {
+    console.error('Google Sign-In Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Sign in with Email and Password
+ */
+export async function loginWithEmail(email: string, pass: string): Promise<User> {
+  try {
+    const result = await signInWithEmailAndPassword(auth, email, pass);
+    return result.user;
+  } catch (error) {
+    console.error('Email Login Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Register with Email and Password
+ */
+export async function registerWithEmail(email: string, pass: string): Promise<User> {
+  try {
+    const result = await createUserWithEmailAndPassword(auth, email, pass);
+    return result.user;
+  } catch (error) {
+    console.error('Email Register Error:', error);
+    throw error;
+  }
+}
+
+/**
+ * Logout current user
+ */
+export async function logoutUser(): Promise<void> {
+  try {
+    await signOut(auth);
+  } catch (error) {
+    console.error('Sign Out Error:', error);
+    throw error;
+  }
+}
+
 export const AGENTS_COLLECTION = 'agents';
 export const SHIFTS_COLLECTION = 'shifts';
 export const PLANNING_DOC = 'planning/current';
+export const API_TOKENS_COLLECTION = 'api_tokens';
+
+export const DEFAULT_MASTER_API_TOKEN: ApiToken = {
+  id: 'token_default_master',
+  name: 'Default Production Token',
+  token: 'cortex_live_sec_9e7a4b82d1c3',
+  prefix: 'cortex_live_sec_9e7...',
+  createdAt: '2026-08-30T00:00:00.000Z',
+  createdBy: 'System Admin',
+  isActive: true
+};
 
 /**
  * Initialize Firestore data if empty or on initial reset
@@ -319,3 +396,91 @@ export async function savePlanningToFirestore(
     console.error('Error saving planning to Firestore:', err);
   }
 }
+
+/**
+ * Fetch all API tokens from Firestore
+ */
+export async function getApiTokensFromFirestore(): Promise<ApiToken[]> {
+  try {
+    const tokensCol = collection(db, API_TOKENS_COLLECTION);
+    const snap = await getDocs(tokensCol);
+    if (snap.empty) {
+      // Initialize with default master token
+      const defToken = DEFAULT_MASTER_API_TOKEN;
+      await setDoc(doc(db, API_TOKENS_COLLECTION, defToken.id), defToken);
+      return [defToken];
+    }
+    const tokens: ApiToken[] = [];
+    snap.forEach(d => {
+      tokens.push({ id: d.id, ...d.data() } as ApiToken);
+    });
+    return tokens.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+  } catch (err) {
+    console.warn('Error fetching API tokens from Firestore:', err);
+    return [DEFAULT_MASTER_API_TOKEN];
+  }
+}
+
+/**
+ * Create a new API token in Firestore
+ */
+export async function createApiTokenInFirestore(
+  name: string,
+  createdBy: string = 'Admin User',
+  expiresAt?: string
+): Promise<ApiToken> {
+  try {
+    // Generate secure randomized token format: cortex_live_sec_<32 hex chars>
+    const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(16)))
+      .map(b => b.toString(16).padStart(2, '0'))
+      .join('');
+    const tokenSecret = `cortex_live_sec_${randomHex}`;
+    const id = `token_${Date.now()}_${randomHex.substring(0, 6)}`;
+    const prefix = `${tokenSecret.substring(0, 20)}...`;
+
+    const newToken: ApiToken = {
+      id,
+      name: name.trim() || 'API Token',
+      token: tokenSecret,
+      prefix,
+      createdAt: new Date().toISOString(),
+      createdBy,
+      expiresAt: expiresAt || undefined,
+      isActive: true
+    };
+
+    const ref = doc(db, API_TOKENS_COLLECTION, id);
+    await setDoc(ref, newToken);
+    return newToken;
+  } catch (err) {
+    console.error('Error creating API token in Firestore:', err);
+    throw err;
+  }
+}
+
+/**
+ * Toggle API token active status
+ */
+export async function toggleApiTokenInFirestore(id: string, isActive: boolean): Promise<void> {
+  try {
+    const ref = doc(db, API_TOKENS_COLLECTION, id);
+    await setDoc(ref, { isActive }, { merge: true });
+  } catch (err) {
+    console.error(`Error updating API token ${id}:`, err);
+    throw err;
+  }
+}
+
+/**
+ * Delete / Revoke API token from Firestore
+ */
+export async function deleteApiTokenFromFirestore(id: string): Promise<void> {
+  try {
+    const ref = doc(db, API_TOKENS_COLLECTION, id);
+    await deleteDoc(ref);
+  } catch (err) {
+    console.error(`Error deleting API token ${id}:`, err);
+    throw err;
+  }
+}
+

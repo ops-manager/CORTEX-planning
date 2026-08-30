@@ -33,12 +33,44 @@ Application moderne, réactive et collaborative de planification des équipes et
 - Barre de statistiques par jour et par shift pour visualiser instantanément la couverture des postes.
 - Indicateurs clés de performance : Total agents, Actifs en poste, En repos/congés, Heures planifiées.
 
-### 5. 🔌 Extraction & API REST pour Applications Externes
-Endpoint API haute performance avec support CORS complet pour alimenter vos autres outils (dashboards, bots, SIRH, paie).
+### 5. 🔌 Extraction & API REST Sécurisée par Token
+Endpoint API haute performance avec authentification par jeton (Bearer Token / Header / URL query) et support CORS complet pour alimenter vos autres outils (dashboards, bots, SIRH, paie).
+
+### 6. 🔑 Gestion des Clés & Jetons API
+- **Générateur de Tokens d'Accès** intégré dans l'interface et persisté sur Cloud Firestore.
+- **Support multi-méthodes** : en-tête `Authorization: Bearer <TOKEN>`, `x-api-key: <TOKEN>` ou paramètre `?apiKey=<TOKEN>`.
+- **Révocation / Activation** instantanée des clés compromises ou expirées.
+- **Génération automatique de snippets de code** (cURL, JavaScript Fetch, Python Requests) avec votre clé active injectée.
+
+### 7. 🔐 Authentification Utilisateur & Contrôle d'Accès Firebase
+- **Page de Connexion Sécurisée** : Accès protégé à l'application avec identification obligatoire.
+- **Connexion Google (Popup)** : Intégration native avec Firebase Auth et Google Identity.
+- **Connexion & Inscription E-mail / Mot de passe** avec gestion des messages d'erreur.
+- **Profil Utilisateur & Déconnexion** : Affichage dans l'en-tête de l'avatar, e-mail/nom et bouton de déconnexion.
+- **Accès Rapide / Démo** : Boutons de bascule rapide pour les tests opérationnels (Ops Manager & Superviseur).
 
 ---
 
-## 📡 Documentation API REST
+## 📡 Documentation API REST & Authentification
+
+Toutes les routes de données sont protégées par authentification de jeton API.
+
+### 🔑 Modes d'Authentification Acceptés
+
+1. **En-tête Bearer (Recommandé)** :
+   ```http
+   Authorization: Bearer VOTRE_TOKEN_API
+   ```
+2. **En-tête personnalisé** :
+   ```http
+   x-api-key: VOTRE_TOKEN_API
+   ```
+3. **Paramètre d'URL (Query parameter)** :
+   ```http
+   https://mon-app.com/api/shifts/daily?date=2026-08-30&apiKey=VOTRE_TOKEN_API
+   ```
+
+---
 
 ### `GET /api/shifts/daily`
 Récupère tous les shifts assignés aux agents pour une date donnée.
@@ -50,13 +82,15 @@ Récupère tous les shifts assignés aux agents pour une date donnée.
 | `team` | `string` | *toutes* | Filtrer par équipe (ex: `Paris`, `Nice`, `Nuit`) |
 | `station` | `string` | *toutes* | Filtrer par code station (ex: `ABN`, `JS`, `RC`) |
 | `format` | `string` | `json` | Format de sortie : `json` (complet), `compact` (clé/valeur), ou `csv` |
+| `apiKey` | `string` | *optionnel si Bearer header fourni* | Jeton d'accès API |
 
-#### Exemple d'appel cURL :
+#### Exemple d'appel cURL Sécurisé :
 ```bash
-curl -X GET "http://localhost:3000/api/shifts/daily?date=2026-08-30&team=Paris"
+curl -X GET "http://localhost:3000/api/shifts/daily?date=2026-08-30&team=Paris" \
+  -H "Authorization: Bearer cortex_live_sec_7f9a12c840be6d318e47"
 ```
 
-#### Exemple de réponse JSON :
+#### Exemple de réponse JSON (200 OK) :
 ```json
 {
   "date": "2026-08-30",
@@ -90,11 +124,20 @@ curl -X GET "http://localhost:3000/api/shifts/daily?date=2026-08-30&team=Paris"
 }
 ```
 
-### Autres Endpoints Disponibles :
+#### En cas d'absence ou invalidité de clé API (401 Unauthorized) :
+```json
+{
+  "error": "Unauthorized",
+  "message": "Accès refusé. Veuillez fournir un token API valide via l'en-tête 'Authorization: Bearer <TOKEN>', 'x-api-key: <TOKEN>' ou le paramètre '?apiKey=<TOKEN>'."
+}
+```
+
+### Autres Endpoints Sécurisés :
 - `GET /api/planning/range?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` : Récupère les plannings sur une plage de dates complète.
-- `GET /api/agents` : Liste de tous les agents.
-- `GET /api/shifts` : Liste des types de shifts configurés.
-- `GET /api/docs` : Spécification des endpoints au format JSON.
+- `GET /api/agents` & `POST /api/agents` : Gestion des agents.
+- `GET /api/shifts` & `POST /api/shifts` : Gestion du catalogue des shifts.
+- `GET /api/tokens` & `POST /api/tokens` : Gestion programmatique des clés API.
+- `GET /api/docs` : Spécification OpenAPI et documentation en direct (accessible sans token).
 - `GET /api/health` : État de santé du serveur et de la synchronisation Firestore.
 
 ---

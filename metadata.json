@@ -1,6 +1,7 @@
 {
   "name": "CORTEX Planning",
   "description": "Application moderne et responsive de planification d'équipes et d'agents style Excel avec colonnes figées, recopie intelligente et gestion drag & drop.",
+  "author": "Richard Digonal",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

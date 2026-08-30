@@ -211,4 +211,4 @@ npm start
 ---
 
 ## 📄 Licence
-Propriétaire - CORTEX Operations Management.
+Propriétaire - Richard Digonal

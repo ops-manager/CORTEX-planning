@@ -77,31 +77,6 @@ const defaultAgents: Agent[] = [
   { id: "VQwpxlcqeyaLkQlmRRwZ", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 25, name: "Christian", station: "CZ", team: "Nice", defaultMissionId: "p4PPae3hEluY3kNpMmK8" }
 ];
 
-// Live dataset imported from https://dispatch-ops.ai.studio/api/shifts
-const defaultShifts: Shift[] = [
-  { id: "BqyY66YgVtPQPGGsUmX3", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "04:30 - 14:00", code: "M1a", order: 0 },
-  { id: "GEpJXxHhQqcMz1F48Djn", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "M1", hours: "05:00 - 14:30", defaultMissionId: "", defaultPause: "09:00", order: 1 },
-  { id: "KSxdHzdODj58vEdxbOEY", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "M2e", hours: "06:00 - 15:30", defaultMissionId: "", defaultPause: "10:00", order: 2 },
-  { id: "WsFQUrR8nq9O8b7pz8ph", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "M3", hours: "07:00 - 16:30", defaultMissionId: "", defaultPause: "11:00", order: 3 },
-  { id: "EjoDQeiPBmiwkKNav7EO", hours: "08:00 - 16:00", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "M", order: 4 },
-  { id: "X87zBEuRF5JZy0Bl8BFp", defaultMissionId: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "08:00 - 16:30", code: "M3h", defaultPause: "13:30", order: 5 },
-  { id: "xvey29FtMXxKxDokQRS7", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "08:00 - 17:30", code: "M4", order: 6 },
-  { id: "oEpuZ3tgiuzxXvvLnfXc", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "09:00 - 17:00", code: "J", defaultPause: "12:00", defaultMissionId: "", order: 7 },
-  { id: "fJq5rj715ioTplzZQMfl", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "09:00 - 17:30", code: "J1h", order: 8 },
-  { id: "40oSGJ7zXP7xcFMa34rq", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "J1", defaultMissionId: "", hours: "09:00 - 18:30", defaultPause: "12:30", order: 9 },
-  { id: "CKBXf36Rf3Ne3z2HwS5j", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "J2", hours: "07:00 - 18:30", defaultMissionId: "", defaultPause: "11:30", order: 10 },
-  { id: "2zu2Jyn1qlSJAB7SSJyZ", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "11:00 - 19:30", code: "S2h", order: 11 },
-  { id: "L86LlyzlK7kR4XOrxy9D", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "11:00 - 20:30", code: "S2b", order: 12 },
-  { id: "t7gRsZ6CgyHacgGvMRbt", defaultMissionId: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "12:00 - 20:00", code: "S", defaultPause: "17:30", order: 13 },
-  { id: "NgHcfkmnqjtOyrC5UgDN", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "S2", hours: "12:00 - 21:30", defaultMissionId: "", defaultPause: "18:00", order: 14 },
-  { id: "D4v2LI7jZegXF0dbhen4", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "13:00 - 22:30", code: "S4", order: 15 },
-  { id: "J0LylrCesbXJX3DGoX6k", code: "S1", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "14:00 - 23:30", defaultMissionId: "", defaultPause: "20:00", order: 16 },
-  { id: "glcvJIYK6IbSulxE0yTt", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "15:00 - 00:00", code: "S3a", order: 17 },
-  { id: "cWc8Ax89pIv7kGtfes8k", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "S3", hours: "16:00 - 01:00", defaultMissionId: "", defaultPause: "21:00", order: 18 },
-  { id: "shift-repos-rh", code: "RH", hours: "00:00 - 00:00", order: 19 },
-  { id: "shift-conge-ca", code: "CA", hours: "00:00 - 00:00", order: 20 }
-];
-
 import { initializeApp, getApps } from 'firebase/app';
 import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
@@ -113,7 +88,7 @@ const firestoreDb = firebaseConfig.firestoreDatabaseId
   : getFirestore(firebaseApp);
 
 let agentsState: Agent[] = [...defaultAgents];
-let shiftsState: Shift[] = [...defaultShifts];
+let shiftsState: Shift[] = [];
 let planningState: Record<string, string> = {};
 let apiTokensState: ApiToken[] = [DEFAULT_MASTER_TOKEN];
 
@@ -169,12 +144,6 @@ async function loadFromFirestore(force: boolean = false) {
           } as Shift);
         }
       });
-      if (!loadedShifts.some(s => s.id === 'shift-repos-rh' || s.code?.toUpperCase() === 'RH')) {
-        loadedShifts.push({ id: "shift-repos-rh", code: "RH", hours: "00:00 - 00:00", order: 19 });
-      }
-      if (!loadedShifts.some(s => s.id === 'shift-conge-ca' || s.code?.toUpperCase() === 'CA')) {
-        loadedShifts.push({ id: "shift-conge-ca", code: "CA", hours: "00:00 - 00:00", order: 20 });
-      }
       loadedShifts.sort((a, b) => (a.order || 0) - (b.order || 0));
       shiftsState = loadedShifts;
     }

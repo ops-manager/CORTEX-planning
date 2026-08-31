@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { Agent, Shift, SelectionRange, HistoryAction, ShiftSeason, AppUser, ShiftSwapRequest } from './types';
-import { API_IMPORTED_AGENTS, API_IMPORTED_SHIFTS, generateInitialSchedule } from './data/mockData';
+import { API_IMPORTED_AGENTS, generateInitialSchedule } from './data/mockData';
 import { 
   generateDateRange, 
   groupDatesByMonth, 
@@ -169,7 +169,7 @@ export default function App() {
 
   // 1. Backend & Data States
   const [agents, setAgents] = useState<Agent[]>(API_IMPORTED_AGENTS);
-  const [shifts, setShifts] = useState<Shift[]>(API_IMPORTED_SHIFTS);
+  const [shifts, setShifts] = useState<Shift[]>([]);
   const [planning, setPlanning] = useState<Record<string, string>>({});
   const [isFirestoreConnected, setIsFirestoreConnected] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
@@ -227,9 +227,7 @@ export default function App() {
     });
 
     const unsubShifts = subscribeToShifts((liveShifts) => {
-      if (liveShifts && liveShifts.length > 0) {
-        setShifts(deduplicateShifts(liveShifts));
-      }
+      setShifts(deduplicateShifts(liveShifts));
     });
 
     const unsubAgents = subscribeToAgents((liveAgents) => {
@@ -262,31 +260,21 @@ export default function App() {
     async function loadData() {
       try {
         setIsLoading(true);
-        // First attempt to initialize/load from Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d
+        // Load exclusively from Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d
         const firestoreData = await initializeFirestoreIfNeeded();
 
         if (!isMounted) return;
 
-        if (firestoreData && firestoreData.agents.length > 0) {
-          setAgents(firestoreData.agents);
-          setShifts(deduplicateShifts(firestoreData.shifts.length > 0 ? firestoreData.shifts : API_IMPORTED_SHIFTS));
+        if (firestoreData) {
+          if (firestoreData.agents && firestoreData.agents.length > 0) {
+            setAgents(firestoreData.agents);
+          }
+          setShifts(deduplicateShifts(firestoreData.shifts || []));
           setPlanning(firestoreData.planning || {});
           setIsFirestoreConnected(true);
-        } else {
-          // Fallback to local default schedule if empty
-          const initSchedule = generateInitialSchedule(API_IMPORTED_AGENTS, dateStrings);
-          setAgents(API_IMPORTED_AGENTS);
-          setShifts(deduplicateShifts(API_IMPORTED_SHIFTS));
-          setPlanning(initSchedule);
         }
       } catch (err) {
-        console.warn('Firestore load failed, using local imported API dataset:', err);
-        const initSchedule = generateInitialSchedule(API_IMPORTED_AGENTS, dateStrings);
-        if (isMounted) {
-          setAgents(API_IMPORTED_AGENTS);
-          setShifts(deduplicateShifts(API_IMPORTED_SHIFTS));
-          setPlanning(initSchedule);
-        }
+        console.warn('Firestore load failed:', err);
       } finally {
         if (isMounted) setIsLoading(false);
       }

@@ -27,7 +27,7 @@ import {
 } from 'firebase/auth';
 import firebaseConfig from '../firebase-applet-config.json';
 import { Agent, Shift, ApiToken, AppUser, UserRole, UserStatus, AccessControlSettings, PreApprovedEmail, ShiftSwapRequest, SwapRequestStatus } from './types';
-import { API_IMPORTED_AGENTS, API_IMPORTED_SHIFTS, generateInitialSchedule } from './data/mockData';
+import { API_IMPORTED_AGENTS, generateInitialSchedule } from './data/mockData';
 
 // Initialize Firebase App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
@@ -170,17 +170,11 @@ export async function getShiftsFromFirestore(): Promise<Shift[]> {
         } as Shift);
       }
     });
-    if (!loadedShifts.some(s => s.id === 'shift-repos-rh' || s.code?.toUpperCase() === 'RH')) {
-      loadedShifts.push({ id: "shift-repos-rh", code: "RH", hours: "00:00 - 00:00", order: 19 });
-    }
-    if (!loadedShifts.some(s => s.id === 'shift-conge-ca' || s.code?.toUpperCase() === 'CA')) {
-      loadedShifts.push({ id: "shift-conge-ca", code: "CA", hours: "00:00 - 00:00", order: 20 });
-    }
     loadedShifts.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     return loadedShifts;
   } catch (err) {
     console.warn('Error fetching shifts from Firestore:', err);
-    return API_IMPORTED_SHIFTS;
+    return [];
   }
 }
 
@@ -192,7 +186,6 @@ export function subscribeToShifts(onUpdate: (shifts: Shift[]) => void): Unsubscr
   return onSnapshot(
     shiftsCol,
     (snap) => {
-      if (snap.empty) return;
       const loadedShifts: Shift[] = [];
       const seenIds = new Set<string>();
       snap.forEach((d) => {
@@ -215,12 +208,6 @@ export function subscribeToShifts(onUpdate: (shifts: Shift[]) => void): Unsubscr
           } as Shift);
         }
       });
-      if (!loadedShifts.some(s => s.id === 'shift-repos-rh' || s.code?.toUpperCase() === 'RH')) {
-        loadedShifts.push({ id: "shift-repos-rh", code: "RH", hours: "00:00 - 00:00", order: 19 });
-      }
-      if (!loadedShifts.some(s => s.id === 'shift-conge-ca' || s.code?.toUpperCase() === 'CA')) {
-        loadedShifts.push({ id: "shift-conge-ca", code: "CA", hours: "00:00 - 00:00", order: 20 });
-      }
       loadedShifts.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
       onUpdate(loadedShifts);
     },
@@ -287,42 +274,17 @@ export async function initializeFirestoreIfNeeded(): Promise<{
       getDocs(shiftsCol)
     ]);
 
-    // Only seed initial default shifts if collection is genuinely empty in Firestore
-    if (shiftsSnap.empty) {
-      console.log('Seeding initial shifts to Firestore database...');
-      const shiftsBatch = writeBatch(db);
-      API_IMPORTED_SHIFTS.forEach(shift => {
-        const ref = doc(db, SHIFTS_COLLECTION, shift.id);
-        const { label, ...shiftData } = shift as any;
-        shiftsBatch.set(ref, shiftData);
-      });
-      await shiftsBatch.commit().catch(e => console.warn('Could not seed initial shifts:', e));
-    }
-
-    // Only seed initial default agents if collection is genuinely empty in Firestore
-    if (agentsSnap.empty) {
-      console.log('Seeding initial agents to Firestore database...');
-      const agentsBatch = writeBatch(db);
-      API_IMPORTED_AGENTS.forEach(agent => {
-        const ref = doc(db, AGENTS_COLLECTION, agent.id);
-        agentsBatch.set(ref, agent);
-      });
-      await agentsBatch.commit().catch(e => console.warn('Could not seed initial agents:', e));
-    }
-
     // Load agents from Firestore
-    const refreshedAgentsSnap = agentsSnap.empty ? await getDocs(agentsCol) : agentsSnap;
     const agents: Agent[] = [];
-    refreshedAgentsSnap.forEach(d => {
+    agentsSnap.forEach(d => {
       agents.push({ id: d.id, ...d.data() } as Agent);
     });
     agents.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
-    // Load shifts from Firestore (guaranteeing it matches Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d)
-    const refreshedShiftsSnap = shiftsSnap.empty ? await getDocs(shiftsCol) : shiftsSnap;
+    // Load shifts from Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d strictly
     const shifts: Shift[] = [];
     const seenShiftIds = new Set<string>();
-    refreshedShiftsSnap.forEach(d => {
+    shiftsSnap.forEach(d => {
       const data = d.data();
       const shiftId = d.id;
       if (!seenShiftIds.has(shiftId)) {
@@ -343,14 +305,6 @@ export async function initializeFirestoreIfNeeded(): Promise<{
         } as Shift);
       }
     });
-
-    // Ensure standard RH / CA rest shifts exist in the set
-    if (!shifts.some(s => s.id === 'shift-repos-rh' || s.code?.toUpperCase() === 'RH')) {
-      shifts.push({ id: "shift-repos-rh", code: "RH", hours: "00:00 - 00:00", order: 19 });
-    }
-    if (!shifts.some(s => s.id === 'shift-conge-ca' || s.code?.toUpperCase() === 'CA')) {
-      shifts.push({ id: "shift-conge-ca", code: "CA", hours: "00:00 - 00:00", order: 20 });
-    }
     shifts.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
     let planning: Record<string, string> = {};
@@ -360,40 +314,21 @@ export async function initializeFirestoreIfNeeded(): Promise<{
       if (docData && docData.data().assignments) {
         planning = docData.data().assignments;
       }
-    } else {
-      // If planning is empty in Firestore, generate initial cycle
-      const dateStrings: string[] = [];
-      const today = new Date();
-      for (let i = -5; i <= 35; i++) {
-        const d = new Date(today);
-        d.setDate(d.getDate() + i);
-        const yyyy = d.getFullYear();
-        const mm = String(d.getMonth() + 1).padStart(2, '0');
-        const dd = String(d.getDate()).padStart(2, '0');
-        dateStrings.push(`${yyyy}-${mm}-${dd}`);
-      }
-      planning = generateInitialSchedule(agents.length > 0 ? agents : API_IMPORTED_AGENTS, dateStrings);
-      // Save initial planning to firestore
-      const planningRef = doc(db, 'planning', 'current');
-      setDoc(planningRef, {
-        assignments: planning,
-        updatedAt: new Date().toISOString()
-      }).catch(e => console.warn('Could not auto-save initial planning to Firestore:', e));
     }
 
     return { agents: agents.length > 0 ? agents : API_IMPORTED_AGENTS, shifts, planning };
   } catch (error) {
-    console.warn('Error reading from Firestore, falling back to local dataset:', error);
+    console.warn('Error reading from Firestore:', error);
     return {
       agents: API_IMPORTED_AGENTS,
-      shifts: API_IMPORTED_SHIFTS,
+      shifts: [],
       planning: {}
     };
   }
 }
 
 /**
- * Reset all data in Firestore and replace with the imported API dataset
+ * Reset all data in Firestore without modifying or resetting custom shifts
  */
 export async function resetAllDataToFirestore(): Promise<{
   agents: Agent[];
@@ -401,18 +336,13 @@ export async function resetAllDataToFirestore(): Promise<{
   planning: Record<string, string>;
 }> {
   try {
-    // 1. Clear any existing old documents
-    const [existingAgents, existingShifts] = await Promise.all([
-      getDocs(collection(db, AGENTS_COLLECTION)),
-      getDocs(collection(db, SHIFTS_COLLECTION))
-    ]);
-
+    // 1. Clear existing agents
+    const existingAgents = await getDocs(collection(db, AGENTS_COLLECTION));
     const deleteBatch = writeBatch(db);
     existingAgents.forEach(d => deleteBatch.delete(d.ref));
-    existingShifts.forEach(d => deleteBatch.delete(d.ref));
     await deleteBatch.commit();
 
-    // 2. Seed 26 Agents from live API
+    // 2. Seed Agents
     const agentsBatch = writeBatch(db);
     API_IMPORTED_AGENTS.forEach(agent => {
       const ref = doc(db, AGENTS_COLLECTION, agent.id);
@@ -420,13 +350,8 @@ export async function resetAllDataToFirestore(): Promise<{
     });
     await agentsBatch.commit();
 
-    // 3. Seed 20 Shifts from live API
-    const shiftsBatch = writeBatch(db);
-    API_IMPORTED_SHIFTS.forEach(shift => {
-      const ref = doc(db, SHIFTS_COLLECTION, shift.id);
-      shiftsBatch.set(ref, shift);
-    });
-    await shiftsBatch.commit();
+    // 3. Keep current shifts from Firestore database
+    const currentShifts = await getShiftsFromFirestore();
 
     // 4. Seed Planning with initial cycle
     const dateStrings: string[] = [];
@@ -447,18 +372,16 @@ export async function resetAllDataToFirestore(): Promise<{
       updatedAt: new Date().toISOString()
     });
 
-    console.log('Successfully initialized Firestore with live 26 agents & 20 shifts.');
-
     return {
       agents: API_IMPORTED_AGENTS,
-      shifts: API_IMPORTED_SHIFTS,
+      shifts: currentShifts,
       planning: initPlanning
     };
   } catch (err) {
     console.error('Failed to reset Firestore data:', err);
     return {
       agents: API_IMPORTED_AGENTS,
-      shifts: API_IMPORTED_SHIFTS,
+      shifts: [],
       planning: {}
     };
   }

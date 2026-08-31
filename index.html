@@ -3,6 +3,37 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <script>
+      (function() {
+        const isIdleStreamMsg = function(msg) {
+          if (!msg) return false;
+          const s = typeof msg === 'string' ? msg : (msg.message || JSON.stringify(msg) || '');
+          return s.includes('Disconnecting idle stream') ||
+                 s.includes('Timed out waiting for new targets') ||
+                 s.includes("GrpcConnection RPC 'Listen' stream") ||
+                 s.includes('Code: 1 Message: 1 CANCELLED');
+        };
+
+        const origError = console.error;
+        console.error = function(...args) {
+          if (args.some(isIdleStreamMsg)) return;
+          return origError.apply(console, args);
+        };
+
+        const origWarn = console.warn;
+        console.warn = function(...args) {
+          if (args.some(isIdleStreamMsg)) return;
+          return origWarn.apply(console, args);
+        };
+
+        window.addEventListener('unhandledrejection', function(event) {
+          if (event && event.reason && isIdleStreamMsg(event.reason)) {
+            event.preventDefault();
+            event.stopPropagation();
+          }
+        });
+      })();
+    </script>
     <title>CORTEX Planning</title>
     <meta name="description" content="Application moderne et responsive de planification d'équipes et d'agents style Excel avec colonnes figées, recopie intelligente et gestion drag & drop." />
     <meta property="og:title" content="CORTEX Planning" />

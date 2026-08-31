@@ -18,7 +18,8 @@ import {
   Building2, 
   X,
   Sparkles,
-  ClipboardCheck
+  ClipboardCheck,
+  Stamp
 } from 'lucide-react';
 
 // In-memory global clipboard buffer ensuring copy/paste works 100% reliably in all iframe/browser contexts
@@ -33,6 +34,7 @@ interface PlanningGridProps {
   onUpdatePlanning: (updates: Record<string, string>, actionDescription: string) => void;
   onReorderAgents: (newAgents: Agent[]) => void;
   activeStampShift: string | null;
+  onSelectStampShift?: (code: string | null) => void;
   onCellContextMenu?: (e: React.MouseEvent, rowIndex: number, colIndex: number) => void;
   selectionRange: SelectionRange | null;
   onSelectionChange: (range: SelectionRange | null) => void;
@@ -49,6 +51,7 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
   onUpdatePlanning,
   onReorderAgents,
   activeStampShift,
+  onSelectStampShift,
   onCellContextMenu,
   selectionRange,
   onSelectionChange,
@@ -392,6 +395,15 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
         return;
       }
 
+      // Escape -> Cancel stamp mode or selection
+      if (e.key === 'Escape') {
+        if (activeStampShift && onSelectStampShift) {
+          e.preventDefault();
+          onSelectStampShift(null);
+          return;
+        }
+      }
+
       if (!selectionRange) return;
 
       const { startRow, startCol, endRow, endCol } = selectionRange;
@@ -548,9 +560,17 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
     if (e.button !== 0) return;
 
     if (activeStampShift) {
-      const agentId = visibleAgentIds[row];
+      const agentId = visibleAgentIds[row] || agents[row]?.id;
       const dateStr = dateStrings[col];
-      onUpdatePlanning({ [`${agentId}_${dateStr}`]: activeStampShift }, `Tampon: ${activeStampShift}`);
+      if (agentId && dateStr) {
+        onUpdatePlanning({ [`${agentId}_${dateStr}`]: activeStampShift }, `Tampon: ${activeStampShift}`);
+        onSelectionChange({
+          startRow: row,
+          startCol: col,
+          endRow: row,
+          endCol: col
+        });
+      }
       return;
     }
 
@@ -1123,7 +1143,8 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                                 }
                               }}
                               className={`
-                                relative text-center p-0 cursor-pointer select-none transition-colors
+                                relative text-center p-0 select-none transition-colors
+                                ${activeStampShift ? 'cursor-pointer hover:ring-2 hover:ring-blue-400 hover:ring-inset hover:bg-blue-600/20' : 'cursor-pointer'}
                                 ${d.isWeekend ? 'bg-slate-950/60' : 'bg-slate-950/20'}
                                 ${d.isToday ? 'bg-blue-950/20' : ''}
                                 ${selected ? 'bg-blue-600/35 z-10' : 'hover:bg-slate-800/40'}
@@ -1184,6 +1205,35 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
         >
           <span className="w-2 h-2 rounded-full bg-blue-400 animate-pulse"></span>
           <span>Sélection : <strong>{selectionInfo.rowCount}</strong> lig. × <strong>{selectionInfo.colCount}</strong> col. (<strong>{selectionInfo.totalCells}</strong> cellules)</span>
+        </div>
+      )}
+
+      {/* Floating Active Stamp Mode Indicator */}
+      {activeStampShift && (
+        <div
+          id="active-stamp-floating-banner"
+          className="fixed bottom-14 left-6 bg-blue-950/95 border-2 border-blue-400 text-white shadow-2xl px-3.5 py-2 rounded-xl text-xs flex items-center gap-2.5 z-40 backdrop-blur-md animate-pulse"
+        >
+          <Stamp className="w-4 h-4 text-blue-400 flex-shrink-0" />
+          <div className="flex items-center gap-1.5">
+            <span className="text-blue-200">Mode Tampon :</span>
+            <span className="font-mono-code font-bold bg-blue-600 text-white px-2 py-0.5 rounded shadow-xs text-xs">
+              {activeStampShift}
+            </span>
+          </div>
+          <span className="text-[11px] text-blue-300 hidden sm:inline">
+            (Cliquez sur une case pour appliquer)
+          </span>
+          {onSelectStampShift && (
+            <button
+              onClick={() => onSelectStampShift(null)}
+              className="ml-1 p-1 bg-slate-800/80 hover:bg-rose-900 text-slate-300 hover:text-white rounded border border-slate-700 hover:border-rose-400 text-[10px] font-semibold transition-colors flex items-center gap-0.5"
+              title="Désactiver le tampon (Échap)"
+            >
+              <X className="w-3 h-3" />
+              <span>Échap</span>
+            </button>
+          )}
         </div>
       )}
 

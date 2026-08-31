@@ -25,7 +25,11 @@ import {
   Sparkles,
   Filter,
   Minimize2,
-  Maximize2
+  Maximize2,
+  Stamp,
+  Paintbrush,
+  Check,
+  X
 } from 'lucide-react';
 
 interface ShiftLegendSidebarProps {
@@ -426,35 +430,45 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
       </div>
 
       {/* Mode Tampon Notice / Status */}
-      <div className="p-2.5 bg-slate-950/60 border-b border-slate-800 text-xs">
+      <div className="p-2.5 bg-slate-950/70 border-b border-slate-800 text-xs">
         {activeStampShift ? (
-          <div className="flex items-center justify-between p-2 bg-blue-950/50 border border-blue-500/40 rounded-lg">
-            <div className="flex items-center gap-2">
-              <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
-                <span className="relative inline-flex rounded-full h-2 w-2 bg-blue-500"></span>
-              </span>
-              <span className="text-[11px] text-blue-200">
-                Mode Tampon : <strong className="text-white font-mono-code">{activeStampShift}</strong>
-              </span>
+          <div className="p-2.5 bg-blue-950/70 border border-blue-500/50 rounded-lg shadow-sm space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2 min-w-0">
+                <span className="relative flex h-2.5 w-2.5 flex-shrink-0">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-blue-400 opacity-75"></span>
+                  <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-blue-500"></span>
+                </span>
+                <div className="flex items-center gap-1.5 truncate">
+                  <Stamp className="w-3.5 h-3.5 text-blue-400 flex-shrink-0" />
+                  <span className="text-[11px] text-blue-200">
+                    Mode Tampon : <strong className="text-white font-mono-code bg-blue-600/60 px-1.5 py-0.5 rounded border border-blue-400/60">{activeStampShift}</strong>
+                  </span>
+                </div>
+              </div>
+              <button
+                id="cancel-stamp-mode-btn"
+                onClick={() => onSelectStampShift(null)}
+                className="text-[10px] bg-slate-800 hover:bg-rose-900/60 text-slate-300 hover:text-rose-200 px-2 py-1 rounded border border-slate-700 hover:border-rose-500/50 transition-colors flex items-center gap-1 flex-shrink-0"
+                title="Désactiver le tampon (Échap)"
+              >
+                <X className="w-3 h-3" />
+                <span>Quitter</span>
+              </button>
             </div>
-            <button
-              id="cancel-stamp-mode-btn"
-              onClick={() => onSelectStampShift(null)}
-              className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded transition-colors"
-            >
-              Quitter
-            </button>
+            <p className="text-[10px] text-blue-300/80 leading-tight">
+              Cliquez sur n'importe quelle case du planning pour y appliquer ce shift. Appuyez sur <strong>Échap</strong> pour quitter.
+            </p>
           </div>
         ) : (
           <div className="flex items-center justify-between text-[11px] text-slate-400">
             <div className="flex items-center gap-1.5">
-              <MousePointerClick className="w-3.5 h-3.5 text-slate-500" />
-              <span>Cliquez pour affecter / tamponner.</span>
+              <Stamp className="w-3.5 h-3.5 text-blue-400" />
+              <span>Cliquez un shift pour l'affecter, ou sur <strong>Tampon</strong>.</span>
             </div>
             <button
               onClick={handleOpenCreate}
-              className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-0.5"
+              className="text-[10px] text-blue-400 hover:text-blue-300 font-semibold flex items-center gap-0.5 flex-shrink-0"
             >
               <Plus className="w-3 h-3" /> Nouveau
             </button>
@@ -497,20 +511,36 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
                   onClick={() => {
                     if (hasActiveSelection) {
                       onApplyShiftToSelection(shift.code);
-                    } else {
-                      onSelectStampShift(isStampActive ? null : shift.code);
                     }
                   }}
-                  title={`${shift.code} : ${shift.label || shift.code} (${shift.hours || 'Horaires n/a'}) · ${count} dans planning · Clic pour tamponner`}
+                  title={`${shift.code} : ${shift.label || shift.code} (${shift.hours || 'Horaires n/a'}) · ${count} dans planning · Clic pour appliquer à la sélection`}
                   className={`
                     group relative flex flex-col items-center justify-center p-1 rounded-lg border transition-all cursor-pointer select-none
                     ${isStampActive 
-                      ? 'bg-blue-900/60 border-blue-400 ring-2 ring-blue-400 shadow-md scale-105 z-10' 
+                      ? 'bg-blue-900/70 border-blue-400 ring-2 ring-blue-400 shadow-md scale-105 z-10' 
                       : shift.hidden
                         ? 'bg-slate-950/25 opacity-60 hover:opacity-100 border-dashed border-slate-800'
                         : 'bg-slate-950/50 hover:bg-slate-800/80 border-slate-800 hover:border-slate-600 hover:scale-105 shadow-sm'}
                   `}
                 >
+                  {/* Quick Stamp Button in Compact View */}
+                  <button
+                    id={`compact-stamp-toggle-shift-${shift.code}-btn`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onSelectStampShift(isStampActive ? null : shift.code);
+                    }}
+                    title={isStampActive ? "Désactiver le tampon" : `Activer le mode tampon pour ${shift.code}`}
+                    className={`
+                      absolute -top-1.5 -right-1.5 p-0.5 rounded-full border transition-all z-20
+                      ${isStampActive 
+                        ? 'bg-blue-600 text-white border-blue-300 ring-1 ring-blue-400 opacity-100' 
+                        : 'bg-slate-900/90 text-slate-400 hover:text-blue-200 hover:bg-blue-950 border-slate-700 opacity-0 group-hover:opacity-100'}
+                    `}
+                  >
+                    <Stamp className="w-2.5 h-2.5 text-blue-300" />
+                  </button>
+
                   {/* Shift Code Badge */}
                   <span
                     className={`
@@ -556,14 +586,13 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
                   onClick={() => {
                     if (hasActiveSelection) {
                       onApplyShiftToSelection(shift.code);
-                    } else {
-                      onSelectStampShift(isStampActive ? null : shift.code);
                     }
                   }}
+                  title={hasActiveSelection ? `Appliquer ${shift.code} à la sélection` : `${shift.code} : ${shift.label || shift.code}`}
                   className={`
                     group p-2 rounded-lg border transition-all cursor-pointer text-xs flex flex-col gap-1.5 relative
                     ${isStampActive 
-                      ? 'bg-blue-900/40 border-blue-500 ring-2 ring-blue-500 shadow-md scale-[1.01]' 
+                      ? 'bg-blue-900/50 border-blue-400 ring-2 ring-blue-400 shadow-md scale-[1.01]' 
                       : shift.hidden
                         ? 'bg-slate-950/25 opacity-75 hover:opacity-100 border-dashed border-slate-800'
                         : 'bg-slate-950/40 hover:bg-slate-800/60 border-slate-800/70 hover:border-slate-700'}
@@ -599,6 +628,25 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
                     </div>
 
                     <div className="flex items-center gap-1">
+                      {/* Stamp Mode Toggle button */}
+                      <button
+                        id={`stamp-toggle-shift-${shift.code}-btn`}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onSelectStampShift(isStampActive ? null : shift.code);
+                        }}
+                        title={isStampActive ? "Désactiver le tampon" : `Activer le mode tampon avec ${shift.code}`}
+                        className={`
+                          px-1.5 py-0.5 rounded text-[10px] font-semibold flex items-center gap-1 border transition-colors
+                          ${isStampActive 
+                            ? 'bg-blue-600 text-white border-blue-400 shadow-xs' 
+                            : 'bg-slate-800/90 hover:bg-blue-950 text-slate-300 hover:text-blue-200 border-slate-700 hover:border-blue-500/50'}
+                        `}
+                      >
+                        <Stamp className="w-3 h-3 text-blue-400" />
+                        <span>{isStampActive ? 'Actif' : 'Tampon'}</span>
+                      </button>
+
                       {/* Occurrences count */}
                       <span
                         className="text-[10px] font-mono-code px-1.5 py-0.5 bg-slate-800 rounded text-slate-400 group-hover:text-slate-200"

@@ -726,6 +726,7 @@ export default function App() {
           onUpdatePlanning={handleUpdatePlanning}
           onReorderAgents={handleReorderAgents}
           activeStampShift={activeStampShift}
+          onSelectStampShift={setActiveStampShift}
           selectionRange={selectionRange}
           onSelectionChange={setSelectionRange}
           onVisibleAgentIdsChange={setVisibleAgentIds}

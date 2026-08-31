@@ -1,7 +1,7 @@
 import React, { useEffect, useRef } from 'react';
 import { Shift } from '../types';
 import { getShiftStyle } from '../utils/shiftUtils';
-import { Copy, Clipboard, Trash2, Calendar, Coffee, Plane, RefreshCw, X, Code2 } from 'lucide-react';
+import { Copy, Clipboard, Trash2, Calendar, Coffee, Plane, RefreshCw, X, Code2, ArrowLeftRight } from 'lucide-react';
 
 interface ContextMenuProps {
   x: number;
@@ -13,6 +13,7 @@ interface ContextMenuProps {
   onClear: () => void;
   onFillWeek: () => void;
   onExtractDateShifts?: () => void;
+  onRequestSwap?: () => void;
   shifts: Shift[];
 }
 
@@ -26,6 +27,7 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
   onClear,
   onFillWeek,
   onExtractDateShifts,
+  onRequestSwap,
   shifts
 }) => {
   const menuRef = useRef<HTMLDivElement>(null);
@@ -88,6 +90,25 @@ export const ContextMenu: React.FC<ContextMenuProps> = ({
             })}
         </div>
       </div>
+
+      {onRequestSwap && (
+        <div className="p-1 mb-1">
+          <button
+            id="context-request-swap-btn"
+            onClick={() => {
+              onRequestSwap();
+              onClose();
+            }}
+            className="w-full flex items-center justify-between px-2.5 py-1.5 rounded-lg bg-blue-950/60 hover:bg-blue-900/80 text-blue-200 hover:text-white transition-colors border border-blue-700/50"
+          >
+            <div className="flex items-center gap-2">
+              <ArrowLeftRight className="w-3.5 h-3.5 text-blue-400" />
+              <span className="font-semibold text-xs">Demande échange</span>
+            </div>
+            <span className="text-[10px] text-blue-300 font-mono-code font-bold">Shift</span>
+          </button>
+        </div>
+      )}
 
       {/* Standard Operations */}
       <div className="space-y-0.5 border-t border-slate-800/80 pt-1">

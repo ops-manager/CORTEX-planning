@@ -58,9 +58,67 @@
         "isActive": { "type": "boolean" }
       },
       "required": ["id", "name", "token", "prefix", "createdAt", "isActive"]
+    },
+    "User": {
+      "title": "User Profile & Access",
+      "description": "Registered users with role and approval status",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "manager", "viewer"] },
+        "status": { "type": "string", "enum": ["approved", "pending", "rejected", "disabled"] },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" },
+        "approvedAt": { "type": "string" },
+        "approvedBy": { "type": "string" }
+      },
+      "required": ["uid", "email", "role", "status"]
+    },
+    "AccessSettings": {
+      "title": "Access Control Settings",
+      "description": "System-wide auto approval and security configurations",
+      "type": "object",
+      "properties": {
+        "autoApprovalEnabled": { "type": "boolean" },
+        "defaultRole": { "type": "string" },
+        "allowedDomains": { "type": "array" },
+        "adminEmails": { "type": "array" }
+      }
+    },
+    "SwapRequest": {
+      "title": "Shift Swap Request",
+      "description": "Requests from agents to swap scheduled shifts",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "requesterUid": { "type": "string" },
+        "requesterEmail": { "type": "string" },
+        "requesterName": { "type": "string" },
+        "requesterAgentId": { "type": "string" },
+        "requesterAgentName": { "type": "string" },
+        "targetAgentId": { "type": "string" },
+        "targetAgentName": { "type": "string" },
+        "dates": { "type": "array" },
+        "requesterShifts": { "type": "object" },
+        "targetShifts": { "type": "object" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["id", "requesterUid", "requesterAgentId", "targetAgentId", "dates", "status"]
     }
   },
   "firestore": {
+    "users": {
+      "entity": "User",
+      "description": "User profiles and RBAC permissions"
+    },
+    "settings": {
+      "entity": "AccessSettings",
+      "description": "Application settings and auto-approval rules"
+    },
     "agents": {
       "entity": "Agent",
       "description": "List of agents"
@@ -72,6 +130,10 @@
     "planning": {
       "entity": "PlanningDoc",
       "description": "Planning state persistence"
+    },
+    "swap_requests": {
+      "entity": "SwapRequest",
+      "description": "Shift swap requests and lifecycle states"
     },
     "api_tokens": {
       "entity": "ApiToken",

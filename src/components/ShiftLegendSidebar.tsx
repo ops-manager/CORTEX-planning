@@ -46,6 +46,7 @@ interface ShiftLegendSidebarProps {
   onDeleteShift: (id: string) => Promise<void>;
   activeSeasonFilter?: ShiftSeason;
   onChangeSeasonFilter?: (season: ShiftSeason) => void;
+  isAdminOrManager?: boolean;
 }
 
 export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
@@ -61,7 +62,8 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
   onUpdateShift,
   onDeleteShift,
   activeSeasonFilter = 'all',
-  onChangeSeasonFilter
+  onChangeSeasonFilter,
+  isAdminOrManager = true
 }) => {
   // Modal states
   const [isShiftModalOpen, setIsShiftModalOpen] = useState(false);
@@ -264,14 +266,16 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
-          <button
-            id="add-new-shift-sidebar-btn"
-            onClick={handleOpenCreate}
-            title="Créer un nouveau code de shift"
-            className="p-1.5 bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/40 rounded-lg transition-colors"
-          >
-            <Plus className="w-4 h-4" />
-          </button>
+          {isAdminOrManager && (
+            <button
+              id="add-new-shift-sidebar-btn"
+              onClick={handleOpenCreate}
+              title="Créer un nouveau code de shift"
+              className="p-1.5 bg-blue-600/20 hover:bg-blue-600 text-blue-300 hover:text-white border border-blue-500/40 rounded-lg transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+            </button>
+          )}
           <button
             id="close-legend-sidebar-btn"
             onClick={onToggleOpen}
@@ -656,41 +660,43 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
                       </span>
 
                       {/* Action buttons: Hide/Unhide, Edit, Delete */}
-                      <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity ml-1">
-                        {/* Hide / Unhide Toggle */}
-                        <button
-                          id={`hide-toggle-shift-${shift.code}-btn`}
-                          onClick={(e) => handleToggleHideShift(shift, e)}
-                          title={shift.hidden ? 'Réafficher ce shift' : 'Masquer ce shift'}
-                          className="p-1 hover:bg-slate-700 text-slate-400 hover:text-amber-300 rounded transition-colors"
-                        >
-                          {shift.hidden ? (
-                            <Eye className="w-3 h-3 text-amber-400" />
-                          ) : (
-                            <EyeOff className="w-3 h-3" />
-                          )}
-                        </button>
+                      {isAdminOrManager && (
+                        <div className="flex items-center opacity-0 group-hover:opacity-100 transition-opacity ml-1">
+                          {/* Hide / Unhide Toggle */}
+                          <button
+                            id={`hide-toggle-shift-${shift.code}-btn`}
+                            onClick={(e) => handleToggleHideShift(shift, e)}
+                            title={shift.hidden ? 'Réafficher ce shift' : 'Masquer ce shift'}
+                            className="p-1 hover:bg-slate-700 text-slate-400 hover:text-amber-300 rounded transition-colors"
+                          >
+                            {shift.hidden ? (
+                              <Eye className="w-3 h-3 text-amber-400" />
+                            ) : (
+                              <EyeOff className="w-3 h-3" />
+                            )}
+                          </button>
 
-                        {/* Edit Button */}
-                        <button
-                          id={`edit-shift-${shift.code}-btn`}
-                          onClick={(e) => handleOpenEdit(shift, e)}
-                          title="Modifier ce shift"
-                          className="p-1 hover:bg-slate-700 text-slate-400 hover:text-blue-300 rounded transition-colors"
-                        >
-                          <Pencil className="w-3 h-3" />
-                        </button>
+                          {/* Edit Button */}
+                          <button
+                            id={`edit-shift-${shift.code}-btn`}
+                            onClick={(e) => handleOpenEdit(shift, e)}
+                            title="Modifier ce shift"
+                            className="p-1 hover:bg-slate-700 text-slate-400 hover:text-blue-300 rounded transition-colors"
+                          >
+                            <Pencil className="w-3 h-3" />
+                          </button>
 
-                        {/* Delete Button */}
-                        <button
-                          id={`delete-shift-${shift.code}-btn`}
-                          onClick={(e) => handleOpenDelete(shift, e)}
-                          title="Supprimer ce shift"
-                          className="p-1 hover:bg-rose-950/50 text-slate-400 hover:text-rose-400 rounded transition-colors"
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      </div>
+                          {/* Delete Button */}
+                          <button
+                            id={`delete-shift-${shift.code}-btn`}
+                            onClick={(e) => handleOpenDelete(shift, e)}
+                            title="Supprimer ce shift"
+                            className="p-1 hover:bg-rose-950/50 text-slate-400 hover:text-rose-400 rounded transition-colors"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        </div>
+                      )}
                     </div>
                   </div>
 
@@ -720,23 +726,25 @@ export const ShiftLegendSidebar: React.FC<ShiftLegendSidebarProps> = ({
       </div>
 
       {/* Footer / Legend Quick Help */}
-      <div className="p-3 border-t border-slate-800 bg-slate-950/90 text-[11px] text-slate-400 space-y-1.5">
-        <div className="flex items-center justify-between text-slate-300 font-medium">
-          <span>Raccourcis rapides</span>
-          <button
-            onClick={handleOpenCreate}
-            className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 font-mono-code"
-          >
-            <Plus className="w-3 h-3" /> Nouveau shift
-          </button>
+      {isAdminOrManager && (
+        <div className="p-3 border-t border-slate-800 bg-slate-950/90 text-[11px] text-slate-400 space-y-1.5">
+          <div className="flex items-center justify-between text-slate-300 font-medium">
+            <span>Raccourcis rapides</span>
+            <button
+              onClick={handleOpenCreate}
+              className="text-[10px] text-blue-400 hover:text-blue-300 flex items-center gap-1 font-mono-code"
+            >
+              <Plus className="w-3 h-3" /> Nouveau shift
+            </button>
+          </div>
+          <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-400">
+            <div><kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300 font-mono-code">Ctrl+C</kbd> Copier</div>
+            <div><kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300 font-mono-code">Ctrl+V</kbd> Coller</div>
+            <div><kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300 font-mono-code">Del</kbd> Effacer</div>
+            <div><kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300 font-mono-code">Poignée</kbd> Glisser</div>
+          </div>
         </div>
-        <div className="grid grid-cols-2 gap-1 text-[10px] text-slate-400">
-          <div><kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300 font-mono-code">Ctrl+C</kbd> Copier</div>
-          <div><kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300 font-mono-code">Ctrl+V</kbd> Coller</div>
-          <div><kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300 font-mono-code">Del</kbd> Effacer</div>
-          <div><kbd className="px-1 py-0.5 bg-slate-800 rounded text-slate-300 font-mono-code">Poignée</kbd> Glisser</div>
-        </div>
-      </div>
+      )}
 
       {/* Create / Edit Shift Modal */}
       {isShiftModalOpen && (

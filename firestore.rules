@@ -1,8 +1,91 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+
+    // Helper functions for Attribute-Based Access Control (ABAC)
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        request.auth.uid == 'nJxGjmZvHxZNnaIV5BXiRjiq0Cv2' ||
+        request.auth.token.email == 'ops.manager.gops@gmail.com'
+      );
+    }
+
+    function isApprovedUser() {
+      return isSuperAdmin() || (
+        isSignedIn() && 
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved'
+      );
+    }
+
+    function isAdmin() {
+      return isSuperAdmin() || (
+        isApprovedUser() &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+      );
+    }
+
+    function isManager() {
+      return isSuperAdmin() || (
+        isApprovedUser() && (
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager' ||
+          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        )
+      );
+    }
+
+    // 1. Users collection
+    match /users/{userId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn() && isOwner(userId);
+      allow update: if isSuperAdmin() || isAdmin() || (isSignedIn() && isOwner(userId));
+      allow delete: if isSuperAdmin() || isAdmin();
+    }
+
+    // 2. Settings collection (Access Control & Auto-approval)
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isSuperAdmin() || isAdmin() || isSignedIn();
+    }
+
+    // 3. Agents collection
+    match /agents/{agentId} {
+      allow read: if true;
+      allow write: if isSuperAdmin() || isAdmin() || isManager() || isSignedIn();
+    }
+
+    // 4. Shifts collection
+    match /shifts/{shiftId} {
+      allow read: if true;
+      allow write: if isSuperAdmin() || isAdmin() || isManager() || isSignedIn();
+    }
+
+    // 5. Planning collection
+    match /planning/{docId} {
+      allow read: if true;
+      allow write: if isSuperAdmin() || isAdmin() || isManager() || isSignedIn();
+    }
+
+    // 6. Shift Swap Requests collection
+    match /swap_requests/{requestId} {
+      allow read: if isSignedIn();
+      allow create: if isSignedIn();
+      allow update: if isSignedIn();
+      allow delete: if isSuperAdmin() || isAdmin() || isManager();
+    }
+
+    // 7. API Tokens collection
+    match /api_tokens/{tokenId} {
+      allow read, write: if isSuperAdmin() || isAdmin() || isSignedIn();
     }
   }
 }
+

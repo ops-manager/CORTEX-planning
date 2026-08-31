@@ -1,5 +1,44 @@
 export type ShiftSeason = 'all' | 'winter' | 'summer';
 
+export type UserRole = 'admin' | 'manager' | 'viewer';
+export type UserStatus = 'approved' | 'pending' | 'rejected' | 'disabled';
+
+export interface AppUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  photoURL?: string;
+  role: UserRole;
+  status: UserStatus;
+  agentId?: string;
+  agentName?: string;
+  createdAt: string;
+  lastLoginAt: string;
+  approvedAt?: string;
+  approvedBy?: string;
+  requestReason?: string;
+  notes?: string;
+}
+
+export interface PreApprovedEmail {
+  email: string;
+  role: UserRole;
+  agentId?: string;
+  agentName?: string;
+  addedAt: string;
+  addedBy: string;
+}
+
+export interface AccessControlSettings {
+  autoApprovalEnabled: boolean;
+  defaultRole: UserRole;
+  allowedDomains: string[];
+  adminEmails: string[];
+  superAdminUid?: string;
+  preApprovedEmails?: PreApprovedEmail[];
+  allowManagersProgramme?: boolean;
+}
+
 export interface Agent {
   id: string;
   name: string;
@@ -65,6 +104,39 @@ export interface DailyCoverage {
   rest: number;
   leaves: number;
   totalActive: number;
+}
+
+export type SwapRequestStatus = 
+  | 'pending_target'      // En attente d'acceptation par l'agent destinataire
+  | 'rejected_by_target'  // Refusé par l'agent destinataire
+  | 'pending_manager'     // Accepté par l'agent -> En attente de validation par un manager
+  | 'rejected_by_manager' // Refusé par un manager
+  | 'approved';           // Validé par un manager -> Échange appliqué automatiquement
+
+export interface ShiftSwapRequest {
+  id: string;
+  requesterUid: string;
+  requesterEmail: string;
+  requesterName: string;
+  requesterAgentId: string;
+  requesterAgentName: string;
+  targetAgentId: string;
+  targetAgentName: string;
+  targetUid?: string;
+  targetEmail?: string;
+  dates: string[]; // ['2026-08-31', '2026-09-01']
+  requesterShifts: Record<string, string>; // dateStr -> shiftCode
+  targetShifts: Record<string, string>; // dateStr -> shiftCode
+  status: SwapRequestStatus;
+  targetDecisionAt?: string;
+  targetDecisionBy?: string;
+  managerUid?: string;
+  managerEmail?: string;
+  managerName?: string;
+  managerDecisionAt?: string;
+  createdAt: string;
+  updatedAt: string;
+  requesterNotified?: boolean;
 }
 
 export interface ApiToken {

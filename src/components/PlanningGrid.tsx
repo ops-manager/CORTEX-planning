@@ -19,7 +19,8 @@ import {
   X,
   Sparkles,
   ClipboardCheck,
-  Stamp
+  Stamp,
+  ArrowLeftRight
 } from 'lucide-react';
 
 // In-memory global clipboard buffer ensuring copy/paste works 100% reliably in all iframe/browser contexts
@@ -40,6 +41,8 @@ interface PlanningGridProps {
   onSelectionChange: (range: SelectionRange | null) => void;
   onOpenDateExtractor?: (date: Date) => void;
   onVisibleAgentIdsChange?: (agentIds: string[]) => void;
+  swapHighlight?: { dates: string[]; agentIds: string[] } | null;
+  onRequestShiftSwap?: (targetAgent: Agent, selectedDates: string[]) => void;
 }
 
 export const PlanningGrid: React.FC<PlanningGridProps> = ({
@@ -56,7 +59,9 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
   selectionRange,
   onSelectionChange,
   onOpenDateExtractor,
-  onVisibleAgentIdsChange
+  onVisibleAgentIdsChange,
+  swapHighlight,
+  onRequestShiftSwap
 }) => {
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const [collapsedTeams, setCollapsedTeams] = useState<Record<string, boolean>>({});
@@ -1099,6 +1104,13 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                             colIndex >= copiedRange.minCol &&
                             colIndex <= copiedRange.maxCol;
 
+                          // Inside active swap request highlight (Amber pulsing glow)
+                          const isSwapHighlighted = Boolean(
+                            swapHighlight &&
+                            swapHighlight.dates.includes(d.dateStr) &&
+                            (swapHighlight.agentIds.length === 0 || swapHighlight.agentIds.includes(agent.id))
+                          );
+
                           return (
                             <td
                               key={d.dateStr}
@@ -1155,6 +1167,7 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                                 ${isRightEdge ? 'border-r-2 border-r-blue-400' : 'border-r border-r-slate-800/80'}
                                 ${isInFillTarget ? 'marching-ants bg-blue-600/40 ring-2 ring-dashed ring-cyan-400 z-20' : ''}
                                 ${isInCopiedSource ? 'ring-2 ring-dashed ring-emerald-400 z-20 bg-emerald-950/30' : ''}
+                                ${isSwapHighlighted ? 'ring-2 ring-amber-400 bg-amber-500/25 z-20 animate-pulse' : ''}
                               `}
                             >
                               <div className="w-full h-full min-h-[34px] flex items-center justify-center px-0.5">
@@ -1266,6 +1279,36 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
         </div>
       )}
 
+      {/* Floating Selection Quick Action Pill (Demande échange) */}
+      {bounds && onRequestShiftSwap && (
+        <div
+          id="grid-selection-swap-pill"
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-40 bg-slate-900/95 border border-blue-500/60 shadow-2xl px-4 py-2 rounded-2xl flex items-center gap-3 backdrop-blur-md animate-in fade-in slide-in-from-bottom-2"
+        >
+          <div className="flex items-center gap-2 text-xs">
+            <span className="w-2 h-2 rounded-full bg-blue-400 animate-ping" />
+            <span className="text-slate-300 font-medium">
+              {bounds.maxCol - bounds.minCol + 1} date(s) sélectionnée(s) sur <strong className="text-white">{visibleAgents[bounds.minRow]?.agent?.name}</strong>
+            </span>
+          </div>
+
+          <button
+            id="floating-demand-swap-btn"
+            onClick={() => {
+              const rowAgent = visibleAgents[bounds.minRow]?.agent;
+              const selectedDateStrings = dates.slice(bounds.minCol, bounds.maxCol + 1).map(d => d.dateStr);
+              if (rowAgent && selectedDateStrings.length > 0) {
+                onRequestShiftSwap(rowAgent, selectedDateStrings);
+              }
+            }}
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-500 hover:to-indigo-500 text-white text-xs font-bold rounded-xl shadow-lg shadow-blue-600/30 transition-all active:scale-95"
+          >
+            <ArrowLeftRight className="w-3.5 h-3.5" />
+            <span>Demande échange</span>
+          </button>
+        </div>
+      )}
+
       {/* Internal Full-Featured Context Menu */}
       {contextMenuState && (
         <ContextMenu
@@ -1298,6 +1341,15 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
               onOpenDateExtractor(dateItem.date);
             }
           }}
+          onRequestSwap={onRequestShiftSwap ? () => {
+            const rowAgent = visibleAgents[contextMenuState.rowIndex]?.agent;
+            const selectedDateStrings = bounds 
+              ? dates.slice(bounds.minCol, bounds.maxCol + 1).map(d => d.dateStr)
+              : [dates[contextMenuState.colIndex]?.dateStr].filter(Boolean);
+            if (rowAgent && selectedDateStrings.length > 0) {
+              onRequestShiftSwap(rowAgent, selectedDateStrings);
+            }
+          } : undefined}
           shifts={shifts}
         />
       )}

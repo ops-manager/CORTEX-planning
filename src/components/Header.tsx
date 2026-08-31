@@ -1,6 +1,6 @@
 import React, { useRef } from 'react';
 import { DatePickerPopover } from './DatePickerPopover';
-import { ShiftSeason } from '../types';
+import { ShiftSeason, UserRole } from '../types';
 import { 
   Undo2, 
   Redo2, 
@@ -16,7 +16,10 @@ import {
   Users,
   Code2,
   LogOut,
-  User as UserIcon
+  ShieldCheck,
+  User as UserIcon,
+  ArrowLeftRight,
+  History
 } from 'lucide-react';
 
 interface HeaderProps {
@@ -40,11 +43,20 @@ interface HeaderProps {
   onToggleLegend: () => void;
   onOpenAgentManager: () => void;
   onOpenExtractorModal?: () => void;
+  onOpenAccessModal?: () => void;
+  onOpenSwapRequestModal?: () => void;
+  onOpenSwapManagerModal?: () => void;
+  onOpenSwapHistoryModal?: () => void;
+  pendingRequestsCount?: number;
+  pendingManagerSwapsCount?: number;
   currentUser?: {
     uid?: string;
     email?: string | null;
     displayName?: string | null;
     photoURL?: string | null;
+    role?: UserRole;
+    agentId?: string;
+    agentName?: string;
   } | null;
   onLogout?: () => void;
   viewRangeDays?: number;
@@ -75,10 +87,19 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleLegend,
   onOpenAgentManager,
   onOpenExtractorModal,
+  onOpenAccessModal,
+  onOpenSwapRequestModal,
+  onOpenSwapManagerModal,
+  onOpenSwapHistoryModal,
+  pendingRequestsCount = 0,
+  pendingManagerSwapsCount = 0,
   currentUser,
   onLogout
 }) => {
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Admin / Manager permission check (hide management tools for viewers)
+  const isAdminOrManager = currentUser?.role === 'admin' || currentUser?.role === 'manager';
 
   const handleImportClick = () => {
     if (fileInputRef.current) {
@@ -208,40 +229,46 @@ export const Header: React.FC<HeaderProps> = ({
         </div>
 
         {/* Auto Fill Cyclic Rotation */}
-        <button
-          id="auto-fill-rotations-btn"
-          onClick={onAutoGeneratePattern}
-          title="Générer un cycle de roulement automatique 24/7"
-          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-950/50 hover:bg-indigo-900/60 border border-indigo-700/60 text-indigo-200 hover:text-white rounded-lg text-xs font-medium transition-colors"
-        >
-          <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
-          <span className="hidden md:inline">Cycle 24/7</span>
-        </button>
+        {isAdminOrManager && (
+          <button
+            id="auto-fill-rotations-btn"
+            onClick={onAutoGeneratePattern}
+            title="Générer un cycle de roulement automatique 24/7"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-indigo-950/50 hover:bg-indigo-900/60 border border-indigo-700/60 text-indigo-200 hover:text-white rounded-lg text-xs font-medium transition-colors"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-indigo-400" />
+            <span className="hidden md:inline">Cycle 24/7</span>
+          </button>
+        )}
 
         {/* Import CSV */}
-        <button
-          id="import-csv-btn"
-          onClick={handleImportClick}
-          title="Importer un planning depuis un fichier CSV"
-          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-blue-300 hover:text-white rounded-lg text-xs font-medium transition-colors"
-        >
-          <Upload className="w-3.5 h-3.5 text-blue-400" />
-          <span>Importer</span>
-        </button>
+        {isAdminOrManager && (
+          <button
+            id="import-csv-btn"
+            onClick={handleImportClick}
+            title="Importer un planning depuis un fichier CSV"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-blue-300 hover:text-white rounded-lg text-xs font-medium transition-colors"
+          >
+            <Upload className="w-3.5 h-3.5 text-blue-400" />
+            <span>Importer</span>
+          </button>
+        )}
 
         {/* Export CSV */}
-        <button
-          id="export-csv-btn"
-          onClick={onExportCSV}
-          title="Exporter le planning au format CSV"
-          className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white rounded-lg text-xs font-medium transition-colors"
-        >
-          <Download className="w-3.5 h-3.5 text-emerald-400" />
-          <span className="hidden sm:inline">Exporter</span>
-        </button>
+        {isAdminOrManager && (
+          <button
+            id="export-csv-btn"
+            onClick={onExportCSV}
+            title="Exporter le planning au format CSV"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-200 hover:text-white rounded-lg text-xs font-medium transition-colors"
+          >
+            <Download className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden sm:inline">Exporter</span>
+          </button>
+        )}
 
         {/* API & Shifts Extractor Button */}
-        {onOpenExtractorModal && (
+        {isAdminOrManager && onOpenExtractorModal && (
           <button
             id="header-open-api-extractor-btn"
             onClick={onOpenExtractorModal}
@@ -253,19 +280,80 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
+        {/* Database Access Permissions & Auto-Approval Button */}
+        {isAdminOrManager && onOpenAccessModal && (
+          <button
+            id="header-open-access-modal-btn"
+            onClick={onOpenAccessModal}
+            title="Gérer les permissions de la base de données et l'auto-approbation"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-emerald-950/50 hover:bg-emerald-900/60 text-emerald-300 hover:text-white border border-emerald-700/60 rounded-lg text-xs font-semibold shadow-sm transition-all hover:shadow-emerald-500/20 active:scale-95 relative"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="hidden md:inline">Accès & Rôles</span>
+            {pendingRequestsCount > 0 && (
+              <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 rounded-full text-[10px] font-black animate-pulse">
+                {pendingRequestsCount}
+              </span>
+            )}
+          </button>
+        )}
+
         {/* Manage Agents & Teams Panel */}
-        <button
-          id="header-open-agent-manager-btn"
-          onClick={onOpenAgentManager}
-          title="Gérer les effectifs et équipes"
-          className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold transition-colors"
-        >
-          <Users className="w-3.5 h-3.5 text-blue-400" />
-          <span className="hidden md:inline">Agents</span>
-          <span className="text-[10px] px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded-full font-mono-code">
-            {totalAgentsCount}
-          </span>
-        </button>
+        {isAdminOrManager && (
+          <button
+            id="header-open-agent-manager-btn"
+            onClick={onOpenAgentManager}
+            title="Gérer les effectifs et équipes"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-xs font-semibold transition-colors"
+          >
+            <Users className="w-3.5 h-3.5 text-blue-400" />
+            <span className="hidden md:inline">Agents</span>
+            <span className="text-[10px] px-1.5 py-0.2 bg-blue-500/20 text-blue-300 rounded-full font-mono-code">
+              {totalAgentsCount}
+            </span>
+          </button>
+        )}
+
+        {/* Shift Swap Request Button (For Lecteurs and all roles) */}
+        {onOpenSwapRequestModal && (
+          <button
+            id="header-shift-swap-btn"
+            onClick={onOpenSwapRequestModal}
+            title="Faire une demande d'échange de shift avec un collègue"
+            className="flex items-center gap-1.5 px-3 py-1.5 bg-gradient-to-r from-blue-600/30 to-indigo-600/30 hover:from-blue-600/50 hover:to-indigo-600/50 border border-blue-500/50 text-blue-200 hover:text-white rounded-lg text-xs font-semibold shadow-sm transition-all active:scale-95"
+          >
+            <ArrowLeftRight className="w-3.5 h-3.5 text-blue-400" />
+            <span>Demande échange</span>
+          </button>
+        )}
+
+        {/* Manager Swap Approval Button (Only for Admin/Manager when pending requests exist) */}
+        {isAdminOrManager && onOpenSwapManagerModal && pendingManagerSwapsCount > 0 && (
+          <button
+            id="header-manager-swaps-btn"
+            onClick={onOpenSwapManagerModal}
+            title="Valider les échanges de shifts approuvés par les agents"
+            className="flex items-center gap-1.5 px-2.5 py-1.5 bg-amber-950/70 hover:bg-amber-900/80 text-amber-200 hover:text-white border border-amber-600/70 rounded-lg text-xs font-bold shadow-sm transition-all animate-pulse"
+          >
+            <ShieldCheck className="w-3.5 h-3.5 text-amber-400" />
+            <span>Échanges à valider</span>
+            <span className="px-1.5 py-0.2 bg-amber-500 text-slate-950 rounded-full text-[10px] font-black">
+              {pendingManagerSwapsCount}
+            </span>
+          </button>
+        )}
+
+        {/* Shift Swap History */}
+        {onOpenSwapHistoryModal && (
+          <button
+            id="header-swap-history-btn"
+            onClick={onOpenSwapHistoryModal}
+            title="Voir l'historique et le suivi de mes demandes d'échange"
+            className="p-1.5 bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700/80 rounded-lg text-xs transition-colors"
+          >
+            <History className="w-4 h-4 text-slate-400" />
+          </button>
+        )}
 
         {/* Toggle Shift Legend */}
         <button
@@ -306,7 +394,7 @@ export const Header: React.FC<HeaderProps> = ({
                   {currentUser.displayName || currentUser.email?.split('@')[0] || 'Utilisateur'}
                 </span>
                 <span className="text-[9px] text-blue-400 font-mono leading-none mt-0.5 truncate">
-                  {currentUser.email ? currentUser.email : 'Connecté'}
+                  {currentUser.agentName ? `Agent: ${currentUser.agentName}` : (currentUser.email ? currentUser.email : 'Connecté')}
                 </span>
               </div>
             </div>

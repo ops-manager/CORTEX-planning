@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { Agent, Shift, SelectionRange, HistoryAction, ShiftSeason } from './types';
+import { Agent, Shift, SelectionRange, HistoryAction, ShiftSeason, AppUser, ShiftSwapRequest } from './types';
 import { API_IMPORTED_AGENTS, API_IMPORTED_SHIFTS, generateInitialSchedule } from './data/mockData';
 import { 
   generateDateRange, 
@@ -16,6 +16,13 @@ import { ShiftLegendSidebar } from './components/ShiftLegendSidebar';
 import { StatsBar } from './components/StatsBar';
 import { AgentManagerModal } from './components/AgentManagerModal';
 import { DateShiftExtractorModal } from './components/DateShiftExtractorModal';
+import { DatabaseAccessModal } from './components/DatabaseAccessModal';
+import { ShiftSwapRequestModal } from './components/ShiftSwapRequestModal';
+import { ShiftSwapTargetPrompt } from './components/ShiftSwapTargetPrompt';
+import { ShiftSwapManagerModal } from './components/ShiftSwapManagerModal';
+import { ShiftSwapAdvisorToasts } from './components/ShiftSwapAdvisorToasts';
+import { ShiftSwapHistoryModal } from './components/ShiftSwapHistoryModal';
+import { PendingApprovalView } from './components/PendingApprovalView';
 import { LoginPage } from './components/LoginPage';
 import { CheckCircle2, AlertTriangle, X } from 'lucide-react';
 import { 
@@ -32,12 +39,16 @@ import {
   deleteAgentFromFirestore,
   createShiftInFirestore,
   updateShiftInFirestore,
-  deleteShiftFromFirestore
+  deleteShiftFromFirestore,
+  syncUserProfileAndCheckAccess,
+  subscribeToUserProfile,
+  subscribeToAllUsers,
+  subscribeToSwapRequests
 } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
 export default function App() {
-  // 0. User Authentication State
+  // 0. User Authentication & Access Permissions State
   const [currentUser, setCurrentUser] = useState<{
     uid: string;
     email?: string | null;
@@ -51,7 +62,10 @@ export default function App() {
       return null;
     }
   });
+  const [currentUserProfile, setCurrentUserProfile] = useState<AppUser | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
+  const [isAccessModalOpen, setIsAccessModalOpen] = useState<boolean>(false);
+  const [pendingRequestsCount, setPendingRequestsCount] = useState<number>(0);
 
   // Auth State Listener
   useEffect(() => {
@@ -70,10 +84,10 @@ export default function App() {
           console.warn('Session storage write error:', e);
         }
       } else {
-        // If not in Firebase Auth and no demo session active, set to null
         const sessionActive = sessionStorage.getItem('cortex_user_session');
         if (!sessionActive) {
           setCurrentUser(null);
+          setCurrentUserProfile(null);
         }
       }
       setIsAuthChecking(false);
@@ -82,10 +96,52 @@ export default function App() {
     return () => unsubscribe();
   }, []);
 
+  // Sync user profile & permissions from Firestore in real-time
+  useEffect(() => {
+    if (!currentUser?.uid) {
+      setCurrentUserProfile(null);
+      return;
+    }
+
+    let isMounted = true;
+    syncUserProfileAndCheckAccess(currentUser).then((profile) => {
+      if (isMounted) {
+        setCurrentUserProfile(profile);
+      }
+    });
+
+    const unsubUser = subscribeToUserProfile(currentUser.uid, (updatedProfile) => {
+      if (isMounted && updatedProfile) {
+        setCurrentUserProfile(updatedProfile);
+      }
+    });
+
+    return () => {
+      isMounted = false;
+      unsubUser();
+    };
+  }, [currentUser?.uid]);
+
+  // Subscribe to pending requests count if current user is admin
+  useEffect(() => {
+    if (currentUserProfile?.role !== 'admin') {
+      setPendingRequestsCount(0);
+      return;
+    }
+
+    const unsubAll = subscribeToAllUsers((users) => {
+      const count = users.filter((u) => u.status === 'pending').length;
+      setPendingRequestsCount(count);
+    });
+
+    return () => unsubAll();
+  }, [currentUserProfile?.role]);
+
   const handleLogout = useCallback(async () => {
     try {
       sessionStorage.removeItem('cortex_user_session');
       setCurrentUser(null);
+      setCurrentUserProfile(null);
       await logoutUser();
     } catch (err) {
       console.warn('Logout warning:', err);
@@ -134,6 +190,23 @@ export default function App() {
   const [isAgentManagerOpen, setIsAgentManagerOpen] = useState<boolean>(false);
   const [isExtractorOpen, setIsExtractorOpen] = useState<boolean>(false);
   const [extractorTargetDate, setExtractorTargetDate] = useState<Date>(() => new Date());
+
+  // Shift Swap States
+  const [swapRequests, setSwapRequests] = useState<ShiftSwapRequest[]>([]);
+  const [isSwapRequestModalOpen, setIsSwapRequestModalOpen] = useState<boolean>(false);
+  const [isSwapManagerModalOpen, setIsSwapManagerModalOpen] = useState<boolean>(false);
+  const [isSwapHistoryModalOpen, setIsSwapHistoryModalOpen] = useState<boolean>(false);
+  const [swapModalTargetAgent, setSwapModalTargetAgent] = useState<Agent | null>(null);
+  const [swapModalSelectedDates, setSwapModalSelectedDates] = useState<string[]>([]);
+
+  // Subscribe to real-time Shift Swap Requests
+  useEffect(() => {
+    const unsubSwaps方案 = subscribeToSwapRequests((requests) => {
+      setSwapRequests(requests);
+    });
+
+    return () => unsubSwaps方案();
+  }, []);
 
   // 4. Undo / Redo History Stack
   const [historyStack, setHistoryStack] = useState<HistoryAction[]>([]);
@@ -224,6 +297,15 @@ export default function App() {
     updates: Record<string, string>,
     actionDescription: string = 'Modification planning'
   ) => {
+    if (currentUserProfile && currentUserProfile.role === 'viewer') {
+      setImportNotification({
+        type: 'error',
+        title: 'Accès restreint (Lecture seule)',
+        details: 'Votre compte dispose du rôle Lecteur. Vous ne pouvez pas modifier le planning. Contactez un administrateur pour obtenir les droits d\'écriture.'
+      });
+      return;
+    }
+
     setPlanning(prev => {
       const nextPlanning = { ...prev, ...updates };
 
@@ -239,7 +321,7 @@ export default function App() {
 
       return nextPlanning;
     });
-  }, [persistPlanning]);
+  }, [persistPlanning, currentUserProfile]);
 
   // Undo
   const handleUndo = useCallback(() => {
@@ -621,8 +703,68 @@ export default function App() {
     reader.readAsText(file, 'UTF-8');
   }, [agents, handleUpdatePlanning]);
 
-  // Loading Screen while checking Authentication status
-  if (isAuthChecking) {
+  // Pending target swap requests for current user (where current user is targetAgent)
+  const pendingTargetRequests = useMemo(() => {
+    if (!currentUserProfile && !currentUser) return [];
+    const email = (currentUserProfile?.email || currentUser?.email || '').toLowerCase().trim();
+    const displayName = (currentUserProfile?.displayName || currentUser?.displayName || '').toLowerCase().trim();
+    const agentId = currentUserProfile?.agentId;
+
+    return swapRequests.filter((req) => {
+      if (req.status !== 'pending_target') return false;
+      if (agentId && req.targetAgentId === agentId) return true;
+      if (email && req.targetEmail?.toLowerCase().trim() === email) return true;
+      if (displayName && req.targetAgentName?.toLowerCase().trim() === displayName) return true;
+      return false;
+    });
+  }, [swapRequests, currentUserProfile, currentUser]);
+
+  // Pending manager requests (where request status is pending_manager)
+  const pendingManagerRequests = useMemo(() => {
+    return swapRequests.filter((req) => req.status === 'pending_manager');
+  }, [swapRequests]);
+
+  // Current active swap highlight on grid (e.g. for target agent receiving a request, highlight requested dates)
+  const activeSwapHighlight = useMemo(() => {
+    if (pendingTargetRequests.length > 0) {
+      const topReq = pendingTargetRequests[0];
+      return {
+        dates: topReq.dates,
+        agentIds: [topReq.targetAgentId, topReq.requesterAgentId]
+      };
+    }
+    if (isSwapRequestModalOpen && swapModalSelectedDates.length > 0) {
+      return {
+        dates: swapModalSelectedDates,
+        agentIds: [swapModalTargetAgent?.id || '', currentUserProfile?.agentId || ''].filter(Boolean)
+      };
+    }
+    return null;
+  }, [pendingTargetRequests, isSwapRequestModalOpen, swapModalSelectedDates, swapModalTargetAgent, currentUserProfile]);
+
+  // Handler to open Shift Swap Request Modal
+  const handleOpenSwapModal = useCallback((targetAgent?: Agent, selectedDateStrings?: string[]) => {
+    if (targetAgent && selectedDateStrings && selectedDateStrings.length > 0) {
+      setSwapModalTargetAgent(targetAgent);
+      setSwapModalSelectedDates(selectedDateStrings);
+    } else if (selectionRange) {
+      const minCol = Math.min(selectionRange.startCol, selectionRange.endCol);
+      const maxCol = Math.max(selectionRange.startCol, selectionRange.endCol);
+      const selDates = dates.slice(minCol, maxCol + 1).map(d => d.dateStr);
+
+      const minRow = Math.min(selectionRange.startRow, selectionRange.endRow);
+      const candidateAgent = agents[minRow] || agents[0];
+      setSwapModalTargetAgent(candidateAgent);
+      setSwapModalSelectedDates(selDates);
+    } else {
+      setSwapModalTargetAgent(null);
+      setSwapModalSelectedDates([formatToDateStr(centerDate)]);
+    }
+    setIsSwapRequestModalOpen(true);
+  }, [selectionRange, dates, agents, centerDate]);
+
+  // Loading Screen while checking Authentication status or syncing profile
+  if (isAuthChecking || (currentUser && !currentUserProfile)) {
     return (
       <div className="min-h-screen w-full bg-slate-950 flex flex-col items-center justify-center text-slate-100 selection:bg-blue-600">
         <div className="relative flex flex-col items-center gap-4">
@@ -631,7 +773,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-2">
             <div className="w-4 h-4 border-2 border-blue-500/30 border-t-blue-400 rounded-full animate-spin" />
-            <span className="text-xs text-slate-400 font-medium">Vérification de session...</span>
+            <span className="text-xs text-slate-400 font-medium">Vérification des autorisations & permissions...</span>
           </div>
         </div>
       </div>
@@ -641,6 +783,19 @@ export default function App() {
   // Not logged in -> Show Login Page
   if (!currentUser) {
     return <LoginPage onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  // Logged in but access is pending or rejected -> Show Pending Approval Screen
+  if (currentUserProfile && currentUserProfile.status !== 'approved') {
+    return (
+      <PendingApprovalView
+        currentUser={currentUserProfile}
+        onLogout={handleLogout}
+        onRefresh={() => {
+          syncUserProfileAndCheckAccess(currentUser).then((p) => setCurrentUserProfile(p));
+        }}
+      />
+    );
   }
 
   return (
@@ -668,8 +823,26 @@ export default function App() {
           setExtractorTargetDate(centerDate);
           setIsExtractorOpen(true);
         }}
-        currentUser={currentUser}
+        onOpenAccessModal={() => setIsAccessModalOpen(true)}
+        pendingRequestsCount={pendingRequestsCount}
+        onOpenSwapRequestModal={() => handleOpenSwapModal()}
+        onOpenSwapManagerModal={() => setIsSwapManagerModalOpen(true)}
+        onOpenSwapHistoryModal={() => setIsSwapHistoryModalOpen(true)}
+        pendingManagerSwapsCount={pendingManagerRequests.length}
+        currentUser={currentUserProfile || currentUser}
         onLogout={handleLogout}
+      />
+
+      {/* Target Agent Top Notification Banner (Never overlapping calendar dates) */}
+      <ShiftSwapTargetPrompt
+        pendingRequests={pendingTargetRequests}
+        currentUser={currentUserProfile || currentUser}
+      />
+
+      {/* Requester Advisor Real-time Notifications & Alerts */}
+      <ShiftSwapAdvisorToasts
+        requests={swapRequests}
+        currentUser={currentUserProfile || currentUser}
       />
 
       {/* Import Status Floating Notification */}
@@ -730,6 +903,8 @@ export default function App() {
           selectionRange={selectionRange}
           onSelectionChange={setSelectionRange}
           onVisibleAgentIdsChange={setVisibleAgentIds}
+          swapHighlight={activeSwapHighlight}
+          onRequestShiftSwap={(targetAgent, selectedDates) => handleOpenSwapModal(targetAgent, selectedDates)}
           onOpenDateExtractor={(date) => {
             setExtractorTargetDate(date);
             setIsExtractorOpen(true);
@@ -751,6 +926,7 @@ export default function App() {
           onDeleteShift={handleDeleteShift}
           activeSeasonFilter={activeSeasonFilter}
           onChangeSeasonFilter={setActiveSeasonFilter}
+          isAdminOrManager={currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'manager' || currentUser?.role === 'admin' || currentUser?.role === 'manager'}
         />
       </div>
 
@@ -786,6 +962,54 @@ export default function App() {
           agents={agents}
           shifts={shifts}
           planning={planning}
+        />
+      )}
+
+      {/* 6. DATABASE ACCESS PERMISSIONS & AUTO-APPROVAL MODAL */}
+      {isAccessModalOpen && currentUserProfile && (
+        <DatabaseAccessModal
+          isOpen={isAccessModalOpen}
+          onClose={() => setIsAccessModalOpen(false)}
+          currentUser={currentUserProfile}
+          agents={agents}
+        />
+      )}
+
+      {/* 7. SHIFT SWAP REQUEST MODAL (Requester Interface) */}
+      {isSwapRequestModalOpen && (
+        <ShiftSwapRequestModal
+          isOpen={isSwapRequestModalOpen}
+          onClose={() => setIsSwapRequestModalOpen(false)}
+          agents={agents}
+          shifts={shifts}
+          planning={planning}
+          dates={dates}
+          currentUser={currentUserProfile || currentUser}
+          initialTargetAgent={swapModalTargetAgent}
+          initialDates={swapModalSelectedDates}
+        />
+      )}
+
+      {/* 8. SHIFT SWAP MANAGER APPROVAL MODAL */}
+      {isSwapManagerModalOpen && (
+        <ShiftSwapManagerModal
+          isOpen={isSwapManagerModalOpen}
+          onClose={() => setIsSwapManagerModalOpen(false)}
+          requests={pendingManagerRequests}
+          currentUser={currentUserProfile || currentUser}
+          onManagerApprovedSwap={(appliedUpdates, actionDesc) => {
+            handleUpdatePlanning(appliedUpdates, actionDesc);
+          }}
+        />
+      )}
+
+      {/* 9. SHIFT SWAP HISTORY & STATUS TRACKING MODAL */}
+      {isSwapHistoryModalOpen && (
+        <ShiftSwapHistoryModal
+          isOpen={isSwapHistoryModalOpen}
+          onClose={() => setIsSwapHistoryModalOpen(false)}
+          requests={swapRequests}
+          currentUser={currentUserProfile || currentUser}
         />
       )}
     </div>

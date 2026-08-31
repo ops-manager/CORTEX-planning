@@ -338,34 +338,6 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
                 </button>
               </form>
 
-              {/* Quick Demo Access Bar */}
-              <div className="mt-6 pt-4 border-t border-slate-800/80">
-                <p className="text-[11px] text-slate-500 text-center mb-2.5">
-                  Accès rapide pour test & supervision :
-                </p>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    id="demo-manager-btn"
-                    onClick={() => handleDemoAccess('manager')}
-                    className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium border border-slate-700 transition-colors"
-                  >
-                    <UserCheck className="w-3.5 h-3.5 text-blue-400" />
-                    <span>Ops Manager</span>
-                  </button>
-
-                  <button
-                    type="button"
-                    id="demo-viewer-btn"
-                    onClick={() => handleDemoAccess('viewer')}
-                    className="flex items-center justify-center gap-1.5 py-1.5 px-2.5 rounded-lg bg-slate-800/80 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-medium border border-slate-700 transition-colors"
-                  >
-                    <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>Superviseur</span>
-                  </button>
-                </div>
-              </div>
-
             </div>
           </div>
 
@@ -374,7 +346,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onLoginSuccess }) => {
 
       {/* Footer */}
       <footer className="w-full max-w-7xl mx-auto px-6 py-4 flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-slate-500 z-10 border-t border-slate-900">
-        <p>© 2026 CORTEX Planning. Tous droits réservés.</p>
+        <p>© 2026 Richard Digonal. Tous droits réservés.</p>
         <div className="flex items-center gap-4">
           <span className="flex items-center gap-1">
             <Lock className="w-3 h-3 text-emerald-400" />

@@ -261,22 +261,36 @@ export async function resetAllDataToFirestore(): Promise<{
   }
 }
 
+// Serialized batch writing for agents to prevent write stream exhaustion
+let isSavingAgentsInFlight = false;
+let pendingAgentsToSave: Agent[] | null = null;
+
 /**
  * Save agents list batch to Firestore (e.g. after reordering or adding)
  */
 export async function saveAgentsToFirestore(agents: Agent[]): Promise<void> {
+  pendingAgentsToSave = agents;
+  if (isSavingAgentsInFlight) return;
+  isSavingAgentsInFlight = true;
+
   try {
-    const batch = writeBatch(db);
-    agents.forEach((agent, idx) => {
-      const ref = doc(db, AGENTS_COLLECTION, agent.id);
-      batch.set(ref, {
-        ...agent,
-        order: idx + 1
-      }, { merge: true });
-    });
-    await batch.commit();
+    while (pendingAgentsToSave) {
+      const currentBatch = pendingAgentsToSave;
+      pendingAgentsToSave = null;
+      const batch = writeBatch(db);
+      currentBatch.forEach((agent, idx) => {
+        const ref = doc(db, AGENTS_COLLECTION, agent.id);
+        batch.set(ref, {
+          ...agent,
+          order: idx + 1
+        }, { merge: true });
+      });
+      await batch.commit();
+    }
   } catch (err) {
-    console.error('Error saving agents to Firestore:', err);
+    console.warn('Error saving agents to Firestore:', err);
+  } finally {
+    isSavingAgentsInFlight = false;
   }
 }
 
@@ -319,23 +333,37 @@ export async function deleteAgentFromFirestore(id: string): Promise<void> {
   }
 }
 
+// Serialized batch writing for shifts to prevent write stream exhaustion
+let isSavingShiftsInFlight = false;
+let pendingShiftsToSave: Shift[] | null = null;
+
 /**
  * Save shifts list batch to Firestore
  */
 export async function saveShiftsToFirestore(shifts: Shift[]): Promise<void> {
+  pendingShiftsToSave = shifts;
+  if (isSavingShiftsInFlight) return;
+  isSavingShiftsInFlight = true;
+
   try {
-    const batch = writeBatch(db);
-    shifts.forEach((shift, idx) => {
-      const ref = doc(db, SHIFTS_COLLECTION, shift.id);
-      const { label, ...shiftData } = shift as any;
-      batch.set(ref, {
-        ...shiftData,
-        order: idx
-      }, { merge: true });
-    });
-    await batch.commit();
+    while (pendingShiftsToSave) {
+      const currentBatch = pendingShiftsToSave;
+      pendingShiftsToSave = null;
+      const batch = writeBatch(db);
+      currentBatch.forEach((shift, idx) => {
+        const ref = doc(db, SHIFTS_COLLECTION, shift.id);
+        const { label, ...shiftData } = shift as any;
+        batch.set(ref, {
+          ...shiftData,
+          order: idx
+        }, { merge: true });
+      });
+      await batch.commit();
+    }
   } catch (err) {
-    console.error('Error saving shifts to Firestore:', err);
+    console.warn('Error saving shifts to Firestore:', err);
+  } finally {
+    isSavingShiftsInFlight = false;
   }
 }
 
@@ -380,21 +408,105 @@ export async function deleteShiftFromFirestore(id: string): Promise<void> {
   }
 }
 
+// Debounced and serialized Firestore planning persistence to prevent write-stream exhaustion
+let pendingPlanningAssignments: Record<string, string> | null = null;
+let isPlanningSaveInFlight = false;
+let planningDebounceTimer: ReturnType<typeof setTimeout> | null = null;
+
 /**
- * Save planning assignments updates to Firestore
+ * Flush any pending debounced planning writes to Firestore immediately
+ */
+export async function flushPlanningSaveToFirestore(): Promise<void> {
+  if (planningDebounceTimer) {
+    clearTimeout(planningDebounceTimer);
+    planningDebounceTimer = null;
+  }
+
+  if (!pendingPlanningAssignments) {
+    return;
+  }
+
+  if (isPlanningSaveInFlight) {
+    // A write is already active; the finally block of the in-flight write will flush this pending state
+    return;
+  }
+
+  const assignmentsToSave = { ...pendingPlanningAssignments };
+  pendingPlanningAssignments = null;
+  isPlanningSaveInFlight = true;
+
+  try {
+    const ref = doc(db, 'planning', 'current');
+    await setDoc(ref, {
+      assignments: assignmentsToSave,
+      updatedAt: new Date().toISOString()
+    }, { merge: true });
+  } catch (err: any) {
+    console.warn('Firestore planning sync throttled or transient error, scheduling retry:', err);
+    // If write stream failed, re-queue assignments to avoid losing changes
+    if (!pendingPlanningAssignments) {
+      pendingPlanningAssignments = assignmentsToSave;
+    }
+  } finally {
+    isPlanningSaveInFlight = false;
+    // If new changes accumulated while the previous write was in flight, schedule next flush
+    if (pendingPlanningAssignments) {
+      if (planningDebounceTimer) clearTimeout(planningDebounceTimer);
+      planningDebounceTimer = setTimeout(() => {
+        flushPlanningSaveToFirestore().catch(() => {});
+      }, 500);
+    }
+  }
+}
+
+/**
+ * Queue a planning save with debouncing (800ms) and serialized in-flight execution.
+ * Avoids exhausting the Firestore WriteStream queue on rapid cell edits, dragging, or pasting.
+ */
+export function queuePlanningSaveToFirestore(
+  allAssignments: Record<string, string>,
+  immediate: boolean = false
+): void {
+  pendingPlanningAssignments = allAssignments;
+
+  if (planningDebounceTimer) {
+    clearTimeout(planningDebounceTimer);
+    planningDebounceTimer = null;
+  }
+
+  if (immediate) {
+    flushPlanningSaveToFirestore().catch(() => {});
+  } else {
+    planningDebounceTimer = setTimeout(() => {
+      flushPlanningSaveToFirestore().catch(() => {});
+    }, 800);
+  }
+}
+
+// Auto-flush pending writes when tab unloads / window closes
+if (typeof window !== 'undefined') {
+  window.addEventListener('beforeunload', () => {
+    if (pendingPlanningAssignments && !isPlanningSaveInFlight) {
+      const assignments = pendingPlanningAssignments;
+      pendingPlanningAssignments = null;
+      try {
+        const ref = doc(db, 'planning', 'current');
+        setDoc(ref, {
+          assignments,
+          updatedAt: new Date().toISOString()
+        }, { merge: true }).catch(() => {});
+      } catch {}
+    }
+  });
+}
+
+/**
+ * Save planning assignments updates to Firestore (debounced)
  */
 export async function savePlanningToFirestore(
   allAssignments: Record<string, string>
 ): Promise<void> {
-  try {
-    const ref = doc(db, 'planning', 'current');
-    await setDoc(ref, {
-      assignments: allAssignments,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
-  } catch (err) {
-    console.error('Error saving planning to Firestore:', err);
-  }
+  queuePlanningSaveToFirestore(allAssignments, false);
 }
 
 /**

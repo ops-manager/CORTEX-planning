@@ -37,6 +37,7 @@ interface PlanningGridProps {
   selectionRange: SelectionRange | null;
   onSelectionChange: (range: SelectionRange | null) => void;
   onOpenDateExtractor?: (date: Date) => void;
+  onVisibleAgentIdsChange?: (agentIds: string[]) => void;
 }
 
 export const PlanningGrid: React.FC<PlanningGridProps> = ({
@@ -51,7 +52,8 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
   onCellContextMenu,
   selectionRange,
   onSelectionChange,
-  onOpenDateExtractor
+  onOpenDateExtractor,
+  onVisibleAgentIdsChange
 }) => {
   const gridContainerRef = useRef<HTMLDivElement>(null);
   const [collapsedTeams, setCollapsedTeams] = useState<Record<string, boolean>>({});
@@ -149,6 +151,13 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
   const visibleAgentIds = React.useMemo(() => {
     return visibleAgents.map(v => v.agent.id);
   }, [visibleAgents]);
+
+  // Sync visible agent IDs mapping with parent component
+  useEffect(() => {
+    if (onVisibleAgentIdsChange) {
+      onVisibleAgentIdsChange(visibleAgentIds);
+    }
+  }, [visibleAgentIds, onVisibleAgentIdsChange]);
 
   const dateStrings = React.useMemo(() => {
     return dates.map(d => d.dateStr);

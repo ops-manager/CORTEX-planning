@@ -24,6 +24,8 @@ import {
   initializeFirestoreIfNeeded, 
   resetAllDataToFirestore, 
   savePlanningToFirestore, 
+  queuePlanningSaveToFirestore,
+  flushPlanningSaveToFirestore,
   saveAgentsToFirestore,
   createAgentInFirestore,
   updateAgentInFirestore,
@@ -124,6 +126,7 @@ export default function App() {
 
   // 3. Selection & Tools States
   const [selectionRange, setSelectionRange] = useState<SelectionRange | null>(null);
+  const [visibleAgentIds, setVisibleAgentIds] = useState<string[]>([]);
   const [activeStampShift, setActiveStampShift] = useState<string | null>(null);
   const [activeSeasonFilter, setActiveSeasonFilter] = useState<ShiftSeason>('all');
   const [isLegendOpen, setIsLegendOpen] = useState<boolean>(true);
@@ -193,20 +196,26 @@ export default function App() {
     };
   }, []);
 
-  // Save changes to Firestore and localStorage
-  const persistPlanning = useCallback((newPlanning: Record<string, string>) => {
+  // Debounced API backend planning sync timer ref
+  const apiSyncTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Save changes to Firestore and localStorage with write-exhaustion prevention
+  const persistPlanning = useCallback((newPlanning: Record<string, string>, immediate: boolean = false) => {
     try {
       localStorage.setItem('cortex_planning_state', JSON.stringify(newPlanning));
-      // Persist directly to Firestore
-      savePlanningToFirestore(newPlanning).catch(err => {
-        console.warn('Firestore planning sync error:', err);
-      });
-      // Also update Express backend for compatibility
-      fetch('/api/planning', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ planning: newPlanning })
-      }).catch(() => {});
+      
+      // Persist to Firestore with debounced, serialized queue
+      queuePlanningSaveToFirestore(newPlanning, immediate);
+      
+      // Debounce sync to Express backend
+      if (apiSyncTimerRef.current) clearTimeout(apiSyncTimerRef.current);
+      apiSyncTimerRef.current = setTimeout(() => {
+        fetch('/api/planning', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ planning: newPlanning })
+        }).catch(() => {});
+      }, 1000);
     } catch {}
   }, []);
 
@@ -443,17 +452,17 @@ export default function App() {
 
     const updates: Record<string, string> = {};
     for (let r = minR; r <= maxR; r++) {
-      const agent = agents[r];
-      if (!agent) continue;
+      const agentId = visibleAgentIds[r] || agents[r]?.id;
+      if (!agentId) continue;
       for (let c = minC; c <= maxC; c++) {
         const dStr = dateStrings[c];
         if (!dStr) continue;
-        updates[`${agent.id}_${dStr}`] = code;
+        updates[`${agentId}_${dStr}`] = code;
       }
     }
 
     handleUpdatePlanning(updates, `Appliquer shift ${code} (${Object.keys(updates).length} cellules)`);
-  }, [selectionRange, agents, dateStrings, handleUpdatePlanning]);
+  }, [selectionRange, visibleAgentIds, agents, dateStrings, handleUpdatePlanning]);
 
   // Clear selection cells
   const handleClearSelection = useCallback(() => {
@@ -465,17 +474,17 @@ export default function App() {
 
     const updates: Record<string, string> = {};
     for (let r = minR; r <= maxR; r++) {
-      const agent = agents[r];
-      if (!agent) continue;
+      const agentId = visibleAgentIds[r] || agents[r]?.id;
+      if (!agentId) continue;
       for (let c = minC; c <= maxC; c++) {
         const dStr = dateStrings[c];
         if (!dStr) continue;
-        updates[`${agent.id}_${dStr}`] = '';
+        updates[`${agentId}_${dStr}`] = '';
       }
     }
 
     handleUpdatePlanning(updates, 'Effacer sélection');
-  }, [selectionRange, agents, dateStrings, handleUpdatePlanning]);
+  }, [selectionRange, visibleAgentIds, agents, dateStrings, handleUpdatePlanning]);
 
   // Auto Generate cyclical 24/7 rotation pattern
   const handleAutoGeneratePattern = useCallback(() => {
@@ -719,6 +728,7 @@ export default function App() {
           activeStampShift={activeStampShift}
           selectionRange={selectionRange}
           onSelectionChange={setSelectionRange}
+          onVisibleAgentIdsChange={setVisibleAgentIds}
           onOpenDateExtractor={(date) => {
             setExtractorTargetDate(date);
             setIsExtractorOpen(true);

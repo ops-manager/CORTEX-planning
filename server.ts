@@ -117,8 +117,17 @@ let shiftsState: Shift[] = [...defaultShifts];
 let planningState: Record<string, string> = {};
 let apiTokensState: ApiToken[] = [DEFAULT_MASTER_TOKEN];
 
-// Load agents, shifts, planning and API tokens directly from Firestore
-async function loadFromFirestore() {
+let lastFirestoreLoadTime = 0;
+const FIRESTORE_CACHE_TTL_MS = 10000; // 10s TTL cache
+
+// Load agents, shifts, planning and API tokens directly from Firestore (with TTL caching)
+async function loadFromFirestore(force: boolean = false) {
+  const now = Date.now();
+  if (!force && now - lastFirestoreLoadTime < FIRESTORE_CACHE_TTL_MS) {
+    return;
+  }
+  lastFirestoreLoadTime = now;
+
   try {
     const [agentsSnap, shiftsSnap, planningSnap, tokensSnap] = await Promise.all([
       getDocs(collection(firestoreDb, 'agents')),
@@ -184,6 +193,9 @@ async function loadFromFirestore() {
     console.warn(`Could not load from Firestore database ${firebaseConfig.firestoreDatabaseId}, using memory cache:`, err);
   }
 }
+
+// Track last token write timestamps in memory to prevent write spam
+const lastTokenWriteTimestamps = new Map<string, number>();
 
 /**
  * Token Validation Helper
@@ -251,9 +263,16 @@ function extractAndValidateToken(req: express.Request): { valid: boolean; tokenO
     return { valid: false, error: "Ce jeton API a expiré" };
   }
 
-  // Update lastUsedAt in memory & Firestore
+  // Update lastUsedAt in memory immediately
   matched.lastUsedAt = new Date().toISOString();
-  setDoc(doc(firestoreDb, 'api_tokens', matched.id), { lastUsedAt: matched.lastUsedAt }, { merge: true }).catch(() => {});
+  
+  // Throttle Firestore write to at most once per 2 minutes per token
+  const lastWrite = lastTokenWriteTimestamps.get(matched.id) || 0;
+  const now = Date.now();
+  if (now - lastWrite > 120000) {
+    lastTokenWriteTimestamps.set(matched.id, now);
+    setDoc(doc(firestoreDb, 'api_tokens', matched.id), { lastUsedAt: matched.lastUsedAt }, { merge: true }).catch(() => {});
+  }
 
   return { valid: true, tokenObj: matched };
 }

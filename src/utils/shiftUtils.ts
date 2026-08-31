@@ -182,6 +182,13 @@ export const SHIFT_STYLE_MAP: Record<string, ShiftStyle> = {
     badgeClass: 'bg-orange-500/25 text-orange-200 border-orange-500/45',
     darkBg: 'bg-orange-950/40'
   },
+  M2E: {
+    bg: 'bg-orange-500/20 text-orange-300 border-orange-500/40 hover:bg-orange-500/30',
+    text: 'text-orange-300',
+    border: 'border-orange-500/40',
+    badgeClass: 'bg-orange-500/25 text-orange-200 border-orange-500/45',
+    darkBg: 'bg-orange-950/40'
+  },
   M3: {
     bg: 'bg-orange-600/20 text-orange-300 border-orange-600/40 hover:bg-orange-600/30',
     text: 'text-orange-300',

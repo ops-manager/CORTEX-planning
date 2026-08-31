@@ -40,6 +40,10 @@ import {
   createShiftInFirestore,
   updateShiftInFirestore,
   deleteShiftFromFirestore,
+  getShiftsFromFirestore,
+  subscribeToShifts,
+  subscribeToAgents,
+  subscribeToPlanning,
   syncUserProfileAndCheckAccess,
   subscribeToUserProfile,
   subscribeToAllUsers,
@@ -199,15 +203,6 @@ export default function App() {
   const [swapModalTargetAgent, setSwapModalTargetAgent] = useState<Agent | null>(null);
   const [swapModalSelectedDates, setSwapModalSelectedDates] = useState<string[]>([]);
 
-  // Subscribe to real-time Shift Swap Requests
-  useEffect(() => {
-    const unsubSwaps方案 = subscribeToSwapRequests((requests) => {
-      setSwapRequests(requests);
-    });
-
-    return () => unsubSwaps方案();
-  }, []);
-
   // 4. Undo / Redo History Stack
   const [historyStack, setHistoryStack] = useState<HistoryAction[]>([]);
   const [redoStack, setRedoStack] = useState<HistoryAction[]>([]);
@@ -225,14 +220,49 @@ export default function App() {
     return dates.map(d => d.dateStr);
   }, [dates]);
 
-  // Load from Firestore (or fallback to backend API) on initial mount
+  // Real-time synchronization for Shifts, Agents, Planning, and Swaps from Firestore database (ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d)
+  useEffect(() => {
+    const unsubSwaps = subscribeToSwapRequests((requests) => {
+      setSwapRequests(requests);
+    });
+
+    const unsubShifts = subscribeToShifts((liveShifts) => {
+      if (liveShifts && liveShifts.length > 0) {
+        setShifts(deduplicateShifts(liveShifts));
+      }
+    });
+
+    const unsubAgents = subscribeToAgents((liveAgents) => {
+      if (liveAgents && liveAgents.length > 0) {
+        setAgents(liveAgents);
+      }
+    });
+
+    const unsubPlanning = subscribeToPlanning((liveAssignments) => {
+      if (liveAssignments && Object.keys(liveAssignments).length > 0) {
+        setPlanning((prev) => ({
+          ...liveAssignments,
+          ...prev // preserve any uncommitted in-flight client modifications
+        }));
+      }
+    });
+
+    return () => {
+      unsubSwaps();
+      unsubShifts();
+      unsubAgents();
+      unsubPlanning();
+    };
+  }, []);
+
+  // Load from Firestore on initial mount
   useEffect(() => {
     let isMounted = true;
 
     async function loadData() {
       try {
         setIsLoading(true);
-        // 1. First attempt to initialize/load from Firestore
+        // First attempt to initialize/load from Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d
         const firestoreData = await initializeFirestoreIfNeeded();
 
         if (!isMounted) return;

@@ -81,7 +81,7 @@ const defaultAgents: Agent[] = [
 const defaultShifts: Shift[] = [
   { id: "BqyY66YgVtPQPGGsUmX3", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "04:30 - 14:00", code: "M1a", order: 0 },
   { id: "GEpJXxHhQqcMz1F48Djn", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "M1", hours: "05:00 - 14:30", defaultMissionId: "", defaultPause: "09:00", order: 1 },
-  { id: "KSxdHzdODj58vEdxbOEY", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "M2", hours: "06:00 - 15:30", defaultMissionId: "", defaultPause: "10:00", order: 2 },
+  { id: "KSxdHzdODj58vEdxbOEY", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "M2e", hours: "06:00 - 15:30", defaultMissionId: "", defaultPause: "10:00", order: 2 },
   { id: "WsFQUrR8nq9O8b7pz8ph", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "M3", hours: "07:00 - 16:30", defaultMissionId: "", defaultPause: "11:00", order: 3 },
   { id: "EjoDQeiPBmiwkKNav7EO", hours: "08:00 - 16:00", defaultMissionId: "", defaultPause: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", code: "M", order: 4 },
   { id: "X87zBEuRF5JZy0Bl8BFp", defaultMissionId: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", hours: "08:00 - 16:30", code: "M3h", defaultPause: "13:30", order: 5 },
@@ -150,11 +150,23 @@ async function loadFromFirestore(force: boolean = false) {
       const seenShiftIds = new Set<string>();
       shiftsSnap.forEach(d => {
         const data = d.data();
-        const { label, ...rest } = data as any;
         const shiftId = d.id;
         if (!seenShiftIds.has(shiftId)) {
           seenShiftIds.add(shiftId);
-          loadedShifts.push({ id: shiftId, ...rest } as Shift);
+          loadedShifts.push({
+            id: shiftId,
+            code: data.code || shiftId,
+            hours: data.hours || '00:00 - 00:00',
+            order: data.order ?? 0,
+            label: data.label || '',
+            color: data.color || '',
+            season: data.season || 'all',
+            hidden: Boolean(data.hidden),
+            defaultPause: data.defaultPause || '',
+            defaultMissionId: data.defaultMissionId || '',
+            ownerId: data.ownerId || '',
+            ...data
+          } as Shift);
         }
       });
       if (!loadedShifts.some(s => s.id === 'shift-repos-rh' || s.code?.toUpperCase() === 'RH')) {
@@ -663,8 +675,13 @@ async function startServer() {
   });
 
   // 6. Shift Definitions APIs (Secured)
-  app.get("/api/shifts", requireApiAuth, (req, res) => {
-    res.json(shiftsState);
+  app.get("/api/shifts", requireApiAuth, async (req, res) => {
+    try {
+      await loadFromFirestore(true);
+      res.json(shiftsState);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
   });
 
   app.post("/api/shifts", requireApiAuth, async (req, res) => {

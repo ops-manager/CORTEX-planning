@@ -266,7 +266,7 @@ export const API_IMPORTED_SHIFTS: Shift[] = [
   },
   {
     id: "KSxdHzdODj58vEdxbOEY",
-    code: "M2",
+    code: "M2e",
     hours: "06:00 - 15:30",
     order: 2,
     defaultMissionId: "",

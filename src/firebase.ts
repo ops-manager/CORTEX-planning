@@ -35,6 +35,34 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 // Suppress internal stream recycling notices and debug logging
 setLogLevel('silent');
 
+if (typeof window !== 'undefined') {
+  const originalConsoleError = console.error;
+  console.error = (...args: any[]) => {
+    const msg = args.map(a => (typeof a === 'string' ? a : (a?.message || ''))).join(' ');
+    if (
+      msg.includes('Disconnecting idle stream') ||
+      msg.includes('Timed out waiting for new targets') ||
+      msg.includes("GrpcConnection RPC 'Listen' stream")
+    ) {
+      return;
+    }
+    originalConsoleError.apply(console, args);
+  };
+
+  const originalConsoleWarn = console.warn;
+  console.warn = (...args: any[]) => {
+    const msg = args.map(a => (typeof a === 'string' ? a : (a?.message || ''))).join(' ');
+    if (
+      msg.includes('Disconnecting idle stream') ||
+      msg.includes('Timed out waiting for new targets') ||
+      msg.includes("GrpcConnection RPC 'Listen' stream")
+    ) {
+      return;
+    }
+    originalConsoleWarn.apply(console, args);
+  };
+}
+
 // Initialize Firestore with specific database ID from config if present
 const firestoreDbId = (firebaseConfig as any).firestoreDatabaseId || undefined;
 export const db = firestoreDbId 

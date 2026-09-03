@@ -406,9 +406,10 @@ export async function saveAgentsToFirestore(agents: Agent[]): Promise<void> {
       const batch = writeBatch(db);
       currentBatch.forEach((agent, idx) => {
         const ref = doc(db, AGENTS_COLLECTION, agent.id);
+        const resolvedOrder = typeof agent.order === 'number' ? agent.order : idx;
         batch.set(ref, {
           ...agent,
-          order: idx + 1
+          order: resolvedOrder
         }, { merge: true });
       });
       await batch.commit();

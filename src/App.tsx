@@ -366,16 +366,34 @@ export default function App() {
   }, [redoStack, persistPlanning]);
 
   // Reorder agents & teams with Firestore sync
-  const handleReorderAgents = useCallback((newAgents: Agent[]) => {
-    setAgents(newAgents);
-    saveAgentsToFirestore(newAgents).catch(err => {
+  const handleReorderAgents = useCallback(async (newAgents: Agent[]) => {
+    // 1. Assign deterministic sequential order indices (0, 1, 2, ... N - 1)
+    const orderedAgents = newAgents.map((ag, idx) => ({
+      ...ag,
+      order: idx
+    }));
+
+    // 2. Immediately update client-side state
+    setAgents(orderedAgents);
+
+    // 3. Persist batch write to Firestore
+    try {
+      await saveAgentsToFirestore(orderedAgents);
+      setIsFirestoreConnected(true);
+    } catch (err) {
       console.warn('Firestore agents sync error:', err);
-    });
-    fetch('/api/agents/reorder', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agents: newAgents })
-    }).catch(() => {});
+    }
+
+    // 4. Also persist to Express backend
+    try {
+      await fetch('/api/agents/reorder', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ agents: orderedAgents })
+      });
+    } catch (err) {
+      console.warn('Backend agents reorder API error:', err);
+    }
   }, []);
 
   // Reset entire dataset to the imported API data with Firestore persistence

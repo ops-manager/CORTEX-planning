@@ -11,7 +11,10 @@ import {
   Building2, 
   MapPin, 
   AlertTriangle,
-  GripVertical
+  GripVertical,
+  ChevronUp,
+  ChevronDown,
+  Check
 } from 'lucide-react';
 
 interface AgentManagerModalProps {
@@ -45,6 +48,16 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
   const [agentToDelete, setAgentToDelete] = useState<Agent | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
+  // Drag & drop reorder states
+  const [draggedModalAgentId, setDraggedModalAgentId] = useState<string | null>(null);
+  const [dropTargetModalAgentId, setDropTargetModalAgentId] = useState<string | null>(null);
+  const [reorderSuccessMsg, setReorderSuccessMsg] = useState<string | null>(null);
+
+  const showReorderFeedback = (msg = "Ordre sauvegardé dans la base de données Firestore") => {
+    setReorderSuccessMsg(msg);
+    setTimeout(() => setReorderSuccessMsg(null), 3000);
+  };
+
   // Group teams
   const teams = React.useMemo(() => {
     const teamMap: Record<string, Agent[]> = {};
@@ -65,6 +78,92 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
 
     return { teamMap, teamNames };
   }, [agents]);
+
+  // Reorder and persist helper
+  const reorderAndPersist = (teamMap: Record<string, Agent[]>, teamNames: string[]) => {
+    const newAgentsList: Agent[] = [];
+    let globalOrder = 0;
+    teamNames.forEach(tName => {
+      const list = teamMap[tName] || [];
+      list.forEach(ag => {
+        newAgentsList.push({
+          ...ag,
+          team: tName,
+          order: globalOrder++
+        });
+      });
+    });
+    onReorderAgents(newAgentsList);
+    showReorderFeedback();
+  };
+
+  const handleMoveAgent = (agentId: string, teamName: string, direction: 'up' | 'down') => {
+    const currentList = [...(teams.teamMap[teamName] || [])];
+    const idx = currentList.findIndex(a => a.id === agentId);
+    if (idx === -1) return;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= currentList.length) return;
+
+    const [moved] = currentList.splice(idx, 1);
+    currentList.splice(targetIdx, 0, moved);
+
+    const updatedMap = {
+      ...teams.teamMap,
+      [teamName]: currentList
+    };
+    reorderAndPersist(updatedMap, teams.teamNames);
+  };
+
+  const handleMoveTeam = (teamName: string, direction: 'up' | 'down') => {
+    const names = [...teams.teamNames];
+    const idx = names.indexOf(teamName);
+    if (idx === -1) return;
+    const targetIdx = direction === 'up' ? idx - 1 : idx + 1;
+    if (targetIdx < 0 || targetIdx >= names.length) return;
+
+    const [moved] = names.splice(idx, 1);
+    names.splice(targetIdx, 0, moved);
+
+    reorderAndPersist(teams.teamMap, names);
+  };
+
+  const handleModalAgentDrop = (targetAgentId: string) => {
+    if (!draggedModalAgentId || draggedModalAgentId === targetAgentId) {
+      setDraggedModalAgentId(null);
+      setDropTargetModalAgentId(null);
+      return;
+    }
+
+    const src = agents.find(a => a.id === draggedModalAgentId);
+    const tgt = agents.find(a => a.id === targetAgentId);
+    if (!src || !tgt) {
+      setDraggedModalAgentId(null);
+      setDropTargetModalAgentId(null);
+      return;
+    }
+
+    const updatedMap: Record<string, Agent[]> = {};
+    teams.teamNames.forEach(t => {
+      updatedMap[t] = [...(teams.teamMap[t] || [])];
+    });
+
+    const srcList = updatedMap[src.team] || [];
+    const srcIdx = srcList.findIndex(a => a.id === src.id);
+    if (srcIdx !== -1) srcList.splice(srcIdx, 1);
+
+    const updatedAgent = { ...src, team: tgt.team };
+    const tgtList = updatedMap[tgt.team] || [];
+    const tgtIdx = tgtList.findIndex(a => a.id === tgt.id);
+    if (tgtIdx !== -1) {
+      tgtList.splice(tgtIdx, 0, updatedAgent);
+    } else {
+      tgtList.push(updatedAgent);
+    }
+
+    reorderAndPersist(updatedMap, teams.teamNames);
+    setDraggedModalAgentId(null);
+    setDropTargetModalAgentId(null);
+  };
 
   // Filtered agents
   const filteredAgents = React.useMemo(() => {
@@ -132,6 +231,12 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
           </div>
 
           <div className="flex items-center gap-2.5">
+            {reorderSuccessMsg && (
+              <div className="flex items-center gap-1.5 px-2.5 py-1 bg-emerald-500/15 border border-emerald-500/30 text-emerald-400 rounded-lg text-xs font-semibold animate-fadeIn">
+                <Check className="w-3.5 h-3.5" />
+                <span>{reorderSuccessMsg}</span>
+              </div>
+            )}
             <button
               id="add-agent-btn-manager"
               onClick={() => handleOpenCreate()}
@@ -212,9 +317,27 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
             return (
               <div key={teamName} className="py-4 first:pt-0 last:pb-0">
                 {/* Team Section Banner */}
-                <div className="flex items-center justify-between mb-2.5">
+                <div className="flex items-center justify-between mb-2.5 bg-slate-950/40 px-3 py-1.5 rounded-lg border border-slate-800/70">
                   <div className="flex items-center gap-2">
-                    <Building2 className="w-4 h-4 text-blue-400" />
+                    <div className="flex items-center gap-0.5">
+                      <button
+                        onClick={() => handleMoveTeam(teamName, 'up')}
+                        disabled={teams.teamNames.indexOf(teamName) === 0}
+                        title="Monter l'équipe"
+                        className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded disabled:opacity-20 disabled:pointer-events-none transition-colors"
+                      >
+                        <ChevronUp className="w-3.5 h-3.5" />
+                      </button>
+                      <button
+                        onClick={() => handleMoveTeam(teamName, 'down')}
+                        disabled={teams.teamNames.indexOf(teamName) === teams.teamNames.length - 1}
+                        title="Descendre l'équipe"
+                        className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded disabled:opacity-20 disabled:pointer-events-none transition-colors"
+                      >
+                        <ChevronDown className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+                    <Building2 className="w-4 h-4 text-blue-400 ml-1" />
                     <h3 className="text-xs font-bold text-slate-200 tracking-wide uppercase">
                       Équipe {teamName}
                     </h3>
@@ -234,16 +357,44 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
 
                 {/* Agents Grid */}
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
-                  {teamAgents.map((agent) => (
+                  {teamAgents.map((agent, agentIdx) => (
                     <div
                       key={agent.id}
                       id={`agent-card-${agent.id}`}
-                      className="group p-3 bg-slate-950/60 hover:bg-slate-800/60 border border-slate-800/80 hover:border-slate-700 rounded-lg flex items-center justify-between gap-2 transition-all shadow-sm"
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        if (draggedModalAgentId && draggedModalAgentId !== agent.id) {
+                          setDropTargetModalAgentId(agent.id);
+                        }
+                      }}
+                      onDrop={() => handleModalAgentDrop(agent.id)}
+                      className={`
+                        group p-2.5 bg-slate-950/60 hover:bg-slate-850 border rounded-lg flex items-center justify-between gap-2 transition-all shadow-sm
+                        ${dropTargetModalAgentId === agent.id ? 'border-blue-500 bg-blue-950/40 ring-1 ring-blue-500' : 'border-slate-800/80 hover:border-slate-700'}
+                      `}
                     >
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <div className="w-8 h-8 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-blue-300 flex-shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                      <div className="flex items-center gap-2 min-w-0">
+                        {/* Drag Handle */}
+                        <span
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('text/plain', `agent:${agent.id}`);
+                            setDraggedModalAgentId(agent.id);
+                          }}
+                          onDragEnd={() => {
+                            setDraggedModalAgentId(null);
+                            setDropTargetModalAgentId(null);
+                          }}
+                          className="cursor-grab active:cursor-grabbing text-slate-600 hover:text-slate-300 flex-shrink-0 p-0.5 rounded hover:bg-slate-800"
+                          title="Glisser pour réorganiser"
+                        >
+                          <GripVertical className="w-3.5 h-3.5" />
+                        </span>
+
+                        <div className="w-7 h-7 rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-xs font-bold text-blue-300 flex-shrink-0 group-hover:bg-blue-600 group-hover:text-white transition-colors">
                           {agent.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
                         </div>
+
                         <div className="min-w-0">
                           <span className="font-semibold text-xs text-slate-100 block truncate">
                             {agent.name}
@@ -253,19 +404,35 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
                               {agent.station}
                             </span>
                             <span className="text-slate-500 font-mono-code">
-                              #{agent.order ?? 0}
+                              #{agent.order != null ? agent.order + 1 : agentIdx + 1}
                             </span>
                           </div>
                         </div>
                       </div>
 
-                      {/* Action buttons */}
-                      <div className="flex items-center gap-1 flex-shrink-0 opacity-80 group-hover:opacity-100 transition-opacity">
+                      {/* Action buttons with reorder arrows */}
+                      <div className="flex items-center gap-0.5 flex-shrink-0">
+                        <button
+                          disabled={agentIdx === 0}
+                          onClick={() => handleMoveAgent(agent.id, teamName, 'up')}
+                          title="Monter l'agent"
+                          className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded disabled:opacity-20 disabled:pointer-events-none transition-colors"
+                        >
+                          <ChevronUp className="w-3.5 h-3.5" />
+                        </button>
+                        <button
+                          disabled={agentIdx === teamAgents.length - 1}
+                          onClick={() => handleMoveAgent(agent.id, teamName, 'down')}
+                          title="Descendre l'agent"
+                          className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded disabled:opacity-20 disabled:pointer-events-none transition-colors"
+                        >
+                          <ChevronDown className="w-3.5 h-3.5" />
+                        </button>
                         <button
                           id={`edit-agent-${agent.id}-btn`}
                           onClick={() => handleOpenEdit(agent)}
                           title="Modifier l'agent"
-                          className="p-1.5 text-slate-400 hover:text-blue-300 hover:bg-slate-800 rounded-md transition-colors"
+                          className="p-1 text-slate-400 hover:text-blue-300 hover:bg-slate-800 rounded transition-colors ml-0.5"
                         >
                           <Pencil className="w-3.5 h-3.5" />
                         </button>
@@ -273,7 +440,7 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
                           id={`delete-agent-${agent.id}-btn`}
                           onClick={() => setAgentToDelete(agent)}
                           title="Supprimer l'agent"
-                          className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 rounded-md transition-colors"
+                          className="p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-950/40 rounded transition-colors"
                         >
                           <Trash2 className="w-3.5 h-3.5" />
                         </button>

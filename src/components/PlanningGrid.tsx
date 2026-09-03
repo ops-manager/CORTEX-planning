@@ -704,15 +704,14 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
       currentTeams.splice(tgtIdx, 0, draggedTeamName);
 
       const newAgentsList: Agent[] = [];
-      let globalOrder = 1;
+      let globalOrder = 0;
       currentTeams.forEach(tName => {
         const teamAgents = teams.teamMap[tName] || [];
-        teamAgents.forEach((ag, agIdx) => {
+        teamAgents.forEach((ag) => {
           newAgentsList.push({
             ...ag,
-            order: agIdx + 1
+            order: globalOrder++
           });
-          globalOrder++;
         });
       });
 
@@ -747,28 +746,52 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
     const tgtAgent = agents.find(a => a.id === targetAgentId);
 
     if (srcAgent && tgtAgent) {
-      const newAgents = [...agents];
-      const srcIdx = newAgents.findIndex(a => a.id === draggedAgentId);
-      newAgents.splice(srcIdx, 1);
+      // Build updated team arrays based on current teamOrder
+      const teamOrder = [...teams.teamOrder];
+      if (!teamOrder.includes(tgtAgent.team)) teamOrder.push(tgtAgent.team);
+      if (!teamOrder.includes(srcAgent.team)) teamOrder.push(srcAgent.team);
 
-      const updatedSrcAgent = {
+      const updatedTeamMap: Record<string, Agent[]> = {};
+      teamOrder.forEach(t => {
+        updatedTeamMap[t] = [...(teams.teamMap[t] || [])];
+      });
+
+      // Remove srcAgent from source team
+      const srcList = updatedTeamMap[srcAgent.team] || [];
+      const srcIdx = srcList.findIndex(a => a.id === srcAgent.id);
+      if (srcIdx !== -1) {
+        srcList.splice(srcIdx, 1);
+      }
+
+      // Update agent's team
+      const updatedAgent: Agent = {
         ...srcAgent,
         team: tgtAgent.team
       };
 
-      const tgtIdx = newAgents.findIndex(a => a.id === targetAgentId);
-      newAgents.splice(tgtIdx, 0, updatedSrcAgent);
+      // Insert into target team at tgtAgent's position
+      const tgtList = updatedTeamMap[tgtAgent.team] || [];
+      const tgtIdx = tgtList.findIndex(a => a.id === tgtAgent.id);
+      if (tgtIdx !== -1) {
+        tgtList.splice(tgtIdx, 0, updatedAgent);
+      } else {
+        tgtList.push(updatedAgent);
+      }
 
-      const teamCounts: Record<string, number> = {};
-      const reindexed = newAgents.map(ag => {
-        teamCounts[ag.team] = (teamCounts[ag.team] || 0) + 1;
-        return {
-          ...ag,
-          order: teamCounts[ag.team]
-        };
+      // Flatten teams with global sequential ordering
+      const newOrderedAgents: Agent[] = [];
+      let globalOrder = 0;
+      teamOrder.forEach(tName => {
+        const list = updatedTeamMap[tName] || [];
+        list.forEach(ag => {
+          newOrderedAgents.push({
+            ...ag,
+            order: globalOrder++
+          });
+        });
       });
 
-      onReorderAgents(reindexed);
+      onReorderAgents(newOrderedAgents);
     }
 
     setDraggedAgentId(null);
@@ -948,8 +971,6 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                   {/* Team Group Banner Header Row */}
                   <tr
                     id={`team-row-${teamName}`}
-                    draggable
-                    onDragStart={(e) => handleTeamDragStart(teamName, e)}
                     onDragOver={(e) => handleTeamDragOver(teamName, e)}
                     onDrop={() => handleTeamDrop(teamName)}
                     className={`
@@ -971,7 +992,12 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                             {isCollapsed ? <ChevronRight className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
                           </button>
                           <span
-                            className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300"
+                            draggable
+                            onDragStart={(e) => {
+                              e.stopPropagation();
+                              handleTeamDragStart(teamName, e);
+                            }}
+                            className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 p-0.5 rounded hover:bg-slate-800"
                             title="Glisser pour réordonner l'équipe"
                           >
                             <GripVertical className="w-3.5 h-3.5" />
@@ -1012,8 +1038,6 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                       <tr
                         key={agent.id}
                         id={`agent-row-${agent.id}`}
-                        draggable
-                        onDragStart={(e) => handleAgentDragStart(agent.id, e)}
                         onDragOver={(e) => handleAgentDragOver(agent.id, e)}
                         onDrop={() => handleAgentDrop(agent.id)}
                         className={`
@@ -1034,7 +1058,12 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                           <div className="flex items-center justify-between gap-1">
                             <div className="flex items-center gap-1.5 min-w-0">
                               <span
-                                className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 flex-shrink-0"
+                                draggable
+                                onDragStart={(e) => {
+                                  e.stopPropagation();
+                                  handleAgentDragStart(agent.id, e);
+                                }}
+                                className="cursor-grab active:cursor-grabbing text-slate-500 hover:text-slate-300 flex-shrink-0 p-0.5 rounded hover:bg-slate-800"
                                 title="Glisser pour réordonner l'agent"
                               >
                                 <GripVertical className="w-3.5 h-3.5" />

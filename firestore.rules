@@ -59,19 +59,19 @@ service cloud.firestore {
     // 3. Agents collection
     match /agents/{agentId} {
       allow read: if true;
-      allow write: if isSuperAdmin() || isAdmin() || isManager() || isSignedIn();
+      allow write: if true;
     }
 
     // 4. Shifts collection
     match /shifts/{shiftId} {
       allow read: if true;
-      allow write: if isSuperAdmin() || isAdmin() || isManager() || isSignedIn();
+      allow write: if true;
     }
 
     // 5. Planning collection
     match /planning/{docId} {
       allow read: if true;
-      allow write: if isSuperAdmin() || isAdmin() || isManager() || isSignedIn();
+      allow write: if true;
     }
 
     // 6. Shift Swap Requests collection

@@ -47,38 +47,8 @@ const DEFAULT_MASTER_TOKEN: ApiToken = {
   isActive: true
 };
 
-// Live dataset imported from https://dispatch-ops.ai.studio/api/agents
-const defaultAgents: Agent[] = [
-  { id: "48Y6YQBfczVLqA9qsDq5", code: "N/A", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Ahmed", station: "ABN", order: 0, team: "Paris", defaultMissionId: "" },
-  { id: "8FQF9jq4AfFGFWskIKvh", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Coline", station: "CC", order: 1, team: "Paris", defaultMissionId: "" },
-  { id: "o3GnbvINA3CqIZe6OisA", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Adam", station: "AME", order: 2, team: "Paris", defaultMissionId: "" },
-  { id: "9pSZsdqh08NeZ9UQ0chJ", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Amira", station: "AD", order: 3, team: "Paris", defaultMissionId: "" },
-  { id: "AbYxB1oNTwBblIaYhHes", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Amin", station: "AO", order: 4, team: "Paris", defaultMissionId: "" },
-  { id: "EWe8yuLNVkN4ROfP1baK", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Océane", station: "OT", order: 6, team: "Paris", defaultMissionId: "" },
-  { id: "IUFiHbVPLh7pvtQzwTlO", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Éléonore", station: "EL", order: 7, defaultMissionId: "ey7PzbgV54Y4fJhBXrEq", team: "Paris" },
-  { id: "KIrV9VL5v2NoEpGhLK7Z", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", station: "RC", name: "Romain", order: 8, team: "Paris", defaultMissionId: "" },
-  { id: "NeCWYNEIvNOoUJ9TbG54", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Richard", station: "RD", defaultMissionId: "HDaUU0HGhOzZdwuJMQG4", order: 9, team: "Paris" },
-  { id: "NppxcVp4SND3oCyqdZPI", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Élodie", station: "EV", defaultMissionId: "cUH8UM9ZSfBidoZt5dxc", order: 10, team: "Paris" },
-  { id: "Pj8hTxkguVRWHyy22LTM", code: "N/A", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Jessy", station: "JS", order: 11, team: "Paris", defaultMissionId: "" },
-  { id: "UwjPL3HiQ3DEvKZU8YIa", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", name: "Yosra", station: "YD", defaultMissionId: "cUH8UM9ZSfBidoZt5dxc", order: 12, team: "Paris" },
-  { id: "ywT65mctUCOFgcFmeHYM", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 13, name: "Youssef", station: "YE", defaultMissionId: "p4PPae3hEluY3kNpMmK8", team: "Paris" },
-  { id: "yFA7e0oEA5nqe6uHUZPB", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 14, name: "Roshan", station: "RCH", defaultMissionId: "p4PPae3hEluY3kNpMmK8", team: "Paris" },
-  { id: "Pv8pSXN1d4jypx2yuvtH", defaultMissionId: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 17, name: "Coralie", station: "COH", team: "Paris" },
-  { id: "baeo0POVhkdaEih8oFuR", defaultMissionId: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 18, name: "Nizar", station: "NF", team: "Paris" },
-  { id: "AxKOCN4fhlJrhCynZ4QS", defaultMissionId: "", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 19, name: "Yasmine", station: "YL", team: "Paris" },
-  { id: "KE6OfnvCkT70RzKg2iYE", team: "Paris", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 26, name: "Chakib", station: "CHB", defaultMissionId: "p4PPae3hEluY3kNpMmK8" },
-  { id: "OsTOooSX9x6aKJB9XY3o", defaultMissionId: "", team: "Paris", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 27, name: "Nicolas", station: "NME" },
-  { id: "C6aluUe2tlhlKh8fYKy6", team: "Paris", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 28, name: "Samantha", station: "SSA", defaultMissionId: "p4PPae3hEluY3kNpMmK8" },
-  { id: "8saImrVI56R5HggPVEGq", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 20, name: "Nairie", station: "NB", team: "Nice", defaultMissionId: "cUH8UM9ZSfBidoZt5dxc" },
-  { id: "b70RZpSk5LjEZfVxoIZf", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 21, name: "Emilien", station: "EO", team: "Nice", defaultMissionId: "p4PPae3hEluY3kNpMmK8" },
-  { id: "6wr3vJfFb0ZHIJjPPt1l", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 22, name: "Naim", station: "NBH", team: "Nice", defaultMissionId: "p4PPae3hEluY3kNpMmK8" },
-  { id: "ik8eGfzpSYf4iJGIHELR", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 23, name: "Vasile", station: "VST", team: "Nice", defaultMissionId: "p4PPae3hEluY3kNpMmK8" },
-  { id: "IuePAkwySTnMJrcm45Oc", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 24, name: "Chloé", station: "CH", team: "Nice", defaultMissionId: "p4PPae3hEluY3kNpMmK8" },
-  { id: "VQwpxlcqeyaLkQlmRRwZ", ownerId: "nJxGjmZvHxZNnaIV5BXiRjiq0Cv2", order: 25, name: "Christian", station: "CZ", team: "Nice", defaultMissionId: "p4PPae3hEluY3kNpMmK8" }
-];
-
 import { initializeApp, getApps } from 'firebase/app';
-import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc } from 'firebase/firestore';
+import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
 import firebaseConfig from './firebase-applet-config.json';
 
 // Initialize Firebase in server using existing database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d
@@ -87,7 +57,7 @@ const firestoreDb = firebaseConfig.firestoreDatabaseId
   ? getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId)
   : getFirestore(firebaseApp);
 
-let agentsState: Agent[] = [...defaultAgents];
+let agentsState: Agent[] = [];
 let shiftsState: Shift[] = [];
 let planningState: Record<string, string> = {};
 let apiTokensState: ApiToken[] = [DEFAULT_MASTER_TOKEN];
@@ -599,7 +569,8 @@ async function startServer() {
   });
 
   // 5. Agent CRUD APIs (Secured)
-  app.get("/api/agents", requireApiAuth, (req, res) => {
+  app.get("/api/agents", requireApiAuth, async (req, res) => {
+    await loadFromFirestore();
     res.json(agentsState);
   });
 
@@ -639,6 +610,40 @@ async function startServer() {
       await deleteDoc(agentRef);
       res.json({ success: true, id });
     } catch (err: any) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // Reorder Agents (Internal / App frontend)
+  app.post("/api/agents/reorder", async (req, res) => {
+    try {
+      const incoming = Array.isArray(req.body) ? req.body : req.body.agents;
+      if (!Array.isArray(incoming)) {
+        return res.status(400).json({ error: "Format invalide: tableau d'agents requis" });
+      }
+
+      // Update in-memory state with sequential order indices
+      const updatedAgents: Agent[] = incoming.map((ag: Agent, idx: number) => ({
+        ...ag,
+        order: idx
+      }));
+
+      agentsState = updatedAgents;
+
+      // Persist all updated agent orders directly to Firestore
+      const batch = writeBatch(firestoreDb);
+      updatedAgents.forEach((ag) => {
+        const ref = doc(firestoreDb, 'agents', ag.id);
+        batch.set(ref, {
+          ...ag,
+          order: ag.order
+        }, { merge: true });
+      });
+      await batch.commit();
+
+      res.json({ success: true, count: updatedAgents.length });
+    } catch (err: any) {
+      console.error("Erreur réorganisation agents dans Firestore:", err);
       res.status(500).json({ error: err.message });
     }
   });

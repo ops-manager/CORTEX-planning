@@ -1,6 +1,6 @@
 # CORTEX Planning
 
-Modern, reactive and collaborative team and support/operations agent planning application, inspired by Excel ergonomics with frozen columns, intelligent copy, synchronization and an intuitive REST API.
+Modern, reactive and collaborative team and support/operations agent planning application, inspired by Excel ergonomics with frozen columns, intelligent copy, synchronization and an intuitive REST API[...]
 
 ---
 
@@ -144,7 +144,7 @@ curl -X GET "http://localhost:3000/api/shifts/daily?date=2026-08-30&team=Paris" 
 
 ## 🛠️ Tech Stack
 
-- **Frontend** : [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Tailwind CSS v4](https://tailwindcss.com/), [Lucide React Icons](https://lucide.dev/), [Motion](https://motion.dev/)
+- **Frontend** : [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Tailwind CSS v4](https://tailwindcss.com/), [Lucide React Icons](https://lucide.dev/), [Motion](https:/[...]
 - **Backend / Server** : [Express 4](https://expressjs.com/), [Node.js](https://nodejs.org/), [TSX](https://github.com/privatenumber/tsx) / [esbuild](https://esbuild.github.io/)
 - **Database** : [Google Cloud Firestore (Firebase SDK v12)](https://firebase.google.com/docs/firestore)
 - **Bundler & Tooling** : [Vite 6](https://vitejs.dev/)
@@ -210,6 +210,64 @@ npm start
 
 ---
 
+## 🤝 How to Contribute?
+
+We welcome contributions to CORTEX Planning! Here's how you can help:
+
+### Getting Started
+1. **Fork the repository** and clone it locally:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/CORTEX-planning.git
+   cd CORTEX-planning
+   ```
+
+2. **Create a feature branch** for your work:
+   ```bash
+   git checkout -b feature/your-feature-name
+   ```
+
+3. **Install dependencies** and start development:
+   ```bash
+   npm install
+   npm run dev
+   ```
+
+### Code Guidelines
+- Use **TypeScript** for all code contributions
+- Follow the existing code style and structure
+- Keep components modular and reusable
+- Add proper type annotations
+- Use meaningful variable and function names
+- Comment complex logic sections
+
+### Before Submitting a PR
+- **Test your changes** thoroughly in development mode
+- **Run the build** to ensure no errors: `npm run build`
+- **Keep commits clean** and descriptive
+- **Update documentation** if adding new features
+- **Check for conflicts** with the main branch
+
+### Types of Contributions Welcome
+- 🐛 **Bug fixes** : Report and fix issues in existing features
+- ✨ **New features** : Propose and implement enhancements
+- 📚 **Documentation** : Improve README, API docs, or code comments
+- 🎨 **UI/UX improvements** : Enhance the planning grid or user interface
+- ⚡ **Performance optimizations** : Optimize code and queries
+- 🧪 **Tests** : Add or improve test coverage
+
+### Reporting Issues
+When reporting a bug, please include:
+- Clear description of the issue
+- Steps to reproduce
+- Expected behavior vs. actual behavior
+- Screenshots or error logs (if applicable)
+- Your environment (Node.js version, OS, etc.)
+
+### Questions?
+Feel free to open an issue for questions or discussions. We're here to help!
+
+---
+
 ## 📄 License
 Proprietary - Richard Digonal
 
@@ -219,7 +277,7 @@ Proprietary - Richard Digonal
 
 # CORTEX Planning
 
-Application moderne, réactive et collaborative de planification des équipes et des agents de support/opérations, inspirée de l'ergonomie d'Excel avec colonnes figées, recopie intelligente, synchronisation et une API REST intuitive.
+Application moderne, réactive et collaborative de planification des équipes et des agents de support/opérations, inspirée de l'ergonomie d'Excel avec colonnes figées, recopie intelligente, synchronisation et une API REST intuitive[...]
 
 ---
 
@@ -363,7 +421,7 @@ curl -X GET "http://localhost:3000/api/shifts/daily?date=2026-08-30&team=Paris" 
 
 ## 🛠️ Stack Technique
 
-- **Frontend** : [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Tailwind CSS v4](https://tailwindcss.com/), [Lucide React Icons](https://lucide.dev/), [Motion](https://motion.dev/)
+- **Frontend** : [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Tailwind CSS v4](https://tailwindcss.com/), [Lucide React Icons](https://lucide.dev/), [Motion](https:/[...]
 - **Backend / Serveur** : [Express 4](https://expressjs.com/), [Node.js](https://nodejs.org/), [TSX](https://github.com/privatenumber/tsx) / [esbuild](https://esbuild.github.io/)
 - **Base de Données** : [Google Cloud Firestore (Firebase SDK v12)](https://firebase.google.com/docs/firestore)
 - **Bundler & Outillage** : [Vite 6](https://vitejs.dev/)
@@ -426,6 +484,64 @@ npm start
 ├── package.json                         # Dépendances et scripts
 └── tsconfig.json                        # Configuration TypeScript
 ```
+
+---
+
+## 🤝 Comment Contribuer ?
+
+Nous accueillons les contributions à CORTEX Planning ! Voici comment vous pouvez nous aider :
+
+### Pour Commencer
+1. **Forkez le dépôt** et clonez-le localement :
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/CORTEX-planning.git
+   cd CORTEX-planning
+   ```
+
+2. **Créez une branche de fonctionnalité** pour votre travail :
+   ```bash
+   git checkout -b feature/nom-de-votre-fonctionnalite
+   ```
+
+3. **Installez les dépendances** et démarrez le développement :
+   ```bash
+   npm install
+   npm run dev
+   ```
+
+### Directives de Code
+- Utilisez **TypeScript** pour toutes les contributions de code
+- Suivez le style et la structure du code existant
+- Gardez les composants modulaires et réutilisables
+- Ajoutez des annotations de type appropriées
+- Utilisez des noms de variables et de fonctions significatifs
+- Commentez les sections de logique complexe
+
+### Avant de Soumettre une PR
+- **Testez vos modifications** à fond en mode développement
+- **Exécutez la compilation** pour vérifier qu'il n'y a pas d'erreurs : `npm run build`
+- **Gardez les commits propres** et descriptifs
+- **Mettez à jour la documentation** si vous ajoutez de nouvelles fonctionnalités
+- **Vérifiez les conflits** avec la branche principale
+
+### Types de Contributions Bienvenues
+- 🐛 **Corrections de bugs** : Signalez et corrigez les problèmes dans les fonctionnalités existantes
+- ✨ **Nouvelles fonctionnalités** : Proposez et implémentez des améliorations
+- 📚 **Documentation** : Améliorez le README, les docs API ou les commentaires du code
+- 🎨 **Améliorations UI/UX** : Améliorez la grille de planification ou l'interface utilisateur
+- ⚡ **Optimisations de performance** : Optimisez le code et les requêtes
+- 🧪 **Tests** : Ajoutez ou améliorez la couverture de tests
+
+### Signaler des Problèmes
+Lors du signalement d'un bug, veuillez inclure :
+- Une description claire du problème
+- Les étapes pour le reproduire
+- Le comportement attendu par rapport au comportement réel
+- Des captures d'écran ou des journaux d'erreur (le cas échéant)
+- Votre environnement (version Node.js, OS, etc.)
+
+### Des Questions ?
+N'hésitez pas à ouvrir une issue pour poser des questions ou lancer des discussions. Nous sommes là pour vous aider !
 
 ---
 

@@ -217,7 +217,7 @@ Proprietary - Richard Digonal
 
 ---
 
-# CORTEX Planification
+# CORTEX Planning
 
 Application moderne, réactive et collaborative de planification des équipes et des agents de support/opérations, inspirée de l'ergonomie d'Excel avec colonnes figées, recopie intelligente, synchronisation et une API REST intuitive.
 

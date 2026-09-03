@@ -1,6 +1,225 @@
 # CORTEX Planning
 
-Application moderne, réactive et collaborative de planification des équipes et des agents de support/opérations, inspirée de l'ergonomie d'Excel avec colonnes figées, recopie intelligente, synchronisation temps réel Cloud Firestore et API REST pour applications tierces.
+Modern, reactive and collaborative team and support/operations agent planning application, inspired by Excel ergonomics with frozen columns, intelligent copy, synchronization and an intuitive REST API.
+
+---
+
+## 🚀 Key Features
+
+### 1. 📅 Intuitive & Ergonomic Planning Grid
+- **Dynamic display** by customizable period (7, 14, 21, 28 days or monthly view).
+- **Fluid temporal navigation** with date picker, "Today" jump and previous/next week buttons.
+- **Frozen columns** for agents (Name, Station, Team, Contract) during horizontal scrolling.
+- **Collapsible/expandable grouping by team** for improved visibility of large workforces.
+- **Stamp Mode** to assign a shift in one click directly on any cell.
+- **Multi-cell selection** by drag & drop, entire row or entire column selection.
+- **Intelligent copy & auto-fill** of week via fill handle or context menu.
+- **Complete context menu** (right-click): Copy, Paste, Fill week, Set Time Off/Leave, Extract shifts from date, Clear.
+- **Undo / Redo** with keyboard shortcuts (`Ctrl+Z` / `Ctrl+Y`).
+
+### 2. 👥 Agent & Team Management
+- Creation, modification and deletion of agents (Name, Team, Station, Contract, Display Order).
+- Filtering by team and instant search.
+- Reorganization by drag & drop of agent order.
+- Import & Export CSV / JSON of agent lists.
+
+### 3. 🏷️ Shift Catalog & Legend
+- Pre-configured standard shifts (Morning `M1`/`M2`, Day `J1`/`J2`, Evening `S1`/`S2`, Night `N1`, Time Off `OFF`, Leave `CP`/`CA`, etc.).
+- Creation and customization of custom shifts (code, label, start/end times, mandatory break, color, season).
+- Display toggle: detailed mode or compact mode (code-only badge grid with counters).
+- Hiding / showing inactive or archived shifts.
+
+### 4. 📊 Statistics & Operational Coverage
+- Statistics bar per day and per shift to instantly visualize position coverage.
+- Key performance indicators: Total agents, Active on duty, Off/on leave, Planned hours.
+
+### 5. 🔌 Extraction & Token-Secured REST API
+High-performance API endpoint with token authentication (Bearer Token / Header / URL query) and full CORS support to feed your other tools (dashboards, bots, HRIS, payroll).
+
+### 6. 🔑 API Keys & Token Management
+- **Integrated Access Token Generator** in the interface and persisted on Cloud Firestore.
+- **Multi-method support**: `Authorization: Bearer <TOKEN>` header, `x-api-key: <TOKEN>` or `?apiKey=<TOKEN>` parameter.
+- **Instant revocation / activation** of compromised or expired keys.
+- **Automatic code snippet generation** (cURL, JavaScript Fetch, Python Requests) with your active key injected.
+
+### 7. 🔐 User Authentication & Firebase Access Control
+- **Secure Login Page**: Protected application access with mandatory identification.
+- **Google Login (Popup)**: Native integration with Firebase Auth and Google Identity.
+- **Email / Password Login & Registration** with error message handling.
+- **User Profile & Logout**: Avatar, email/name display in header and logout button.
+- **Quick Access / Demo**: Toggle buttons for operational testing (Ops Manager & Supervisor).
+
+---
+
+## 📡 REST API Documentation & Authentication
+
+All data routes are protected by API token authentication.
+
+### 🔑 Accepted Authentication Modes
+
+1. **Bearer Header (Recommended)** :
+   ```http
+   Authorization: Bearer YOUR_API_TOKEN
+   ```
+2. **Custom Header** :
+   ```http
+   x-api-key: YOUR_API_TOKEN
+   ```
+3. **URL Parameter (Query parameter)** :
+   ```http
+   https://my-app.com/api/shifts/daily?date=2026-08-30&apiKey=YOUR_API_TOKEN
+   ```
+
+---
+
+### `GET /api/shifts/daily`
+Retrieves all shifts assigned to agents for a given date.
+
+#### URL Parameters (Query Params) :
+| Parameter | Type | Default | Description |
+| :--- | :--- | :--- | :--- |
+| `date` | `string` | *today* | Date in `YYYY-MM-DD` or `DD/MM/YYYY` format |
+| `team` | `string` | *all* | Filter by team (ex: `Paris`, `Nice`, `Night`) |
+| `station` | `string` | *all* | Filter by station code (ex: `ABN`, `JS`, `RC`) |
+| `format` | `string` | `json` | Output format: `json` (complete), `compact` (key/value), or `csv` |
+| `apiKey` | `string` | *optional if Bearer header provided* | API access token |
+
+#### Example Secure cURL Call :
+```bash
+curl -X GET "http://localhost:3000/api/shifts/daily?date=2026-08-30&team=Paris" \
+  -H "Authorization: Bearer cortex_live_sec_7f9a12c840be6d318e47"
+```
+
+#### Example JSON Response (200 OK) :
+```json
+{
+  "date": "2026-08-30",
+  "dayName": "Sunday",
+  "isoTimestamp": "2026-08-30T00:00:00.000Z",
+  "totalAgents": 28,
+  "totalAssigned": 24,
+  "totalWorking": 18,
+  "totalOff": 6,
+  "shiftCounts": {
+    "M1": 6,
+    "J1": 8,
+    "S1": 4,
+    "OFF": 6
+  },
+  "assignments": [
+    {
+      "agentId": "agent_1",
+      "agentName": "Ahmed B.",
+      "station": "ABN",
+      "team": "Paris",
+      "shiftCode": "M1",
+      "shiftLabel": "Morning 1",
+      "hours": "07:00 - 15:30",
+      "startTime": "07:00",
+      "endTime": "15:30",
+      "defaultPause": "00:30",
+      "isOff": false
+    }
+  ]
+}
+```
+
+#### In case of missing or invalid API key (401 Unauthorized) :
+```json
+{
+  "error": "Unauthorized",
+  "message": "Access denied. Please provide a valid API token via the 'Authorization: Bearer <TOKEN>', 'x-api-key: <TOKEN>' header or the '?apiKey=<TOKEN>' parameter."
+}
+```
+
+### Other Secured Endpoints :
+- `GET /api/planning/range?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD` : Retrieves planning over a complete date range.
+- `GET /api/agents` & `POST /api/agents` : Agent management.
+- `GET /api/shifts` & `POST /api/shifts` : Shift catalog management.
+- `GET /api/tokens` & `POST /api/tokens` : Programmatic API key management.
+- `GET /api/docs` : OpenAPI specification and live documentation (accessible without token).
+- `GET /api/health` : Server health status and Firestore synchronization.
+
+---
+
+## 🛠️ Tech Stack
+
+- **Frontend** : [React 19](https://react.dev/), [TypeScript](https://www.typescriptlang.org/), [Tailwind CSS v4](https://tailwindcss.com/), [Lucide React Icons](https://lucide.dev/), [Motion](https://motion.dev/)
+- **Backend / Server** : [Express 4](https://expressjs.com/), [Node.js](https://nodejs.org/), [TSX](https://github.com/privatenumber/tsx) / [esbuild](https://esbuild.github.io/)
+- **Database** : [Google Cloud Firestore (Firebase SDK v12)](https://firebase.google.com/docs/firestore)
+- **Bundler & Tooling** : [Vite 6](https://vitejs.dev/)
+
+---
+
+## 📦 Installation & Getting Started
+
+### Requirements
+- Node.js 18+ or 20+
+- npm or bun
+
+### 1. Install dependencies
+```bash
+npm install
+```
+
+### 2. Start in Development Mode
+```bash
+npm run dev
+```
+The application starts on `http://localhost:3000`.
+
+### 3. Build for Production
+```bash
+npm run build
+```
+This command compiles the frontend application with Vite in `dist/` and generates the standalone CommonJS server `dist/server.cjs` with esbuild.
+
+### 4. Launch in Production
+```bash
+npm start
+```
+
+---
+
+## 🗄️ Project Structure
+
+```
+├── src/
+│   ├── components/
+│   │   ├── Header.tsx                   # Navigation bar, filters, export and temporal jump
+│   │   ├── PlanningGrid.tsx             # Interactive Excel-style planning grid
+│   │   ├── ShiftLegendSidebar.tsx       # Shifts sidebar & stamp mode
+│   │   ├── DateShiftExtractorModal.tsx  # Extraction modal and REST API tester
+│   │   ├── AgentManagerModal.tsx        # Complete agent & team manager
+│   │   ├── ContextMenu.tsx              # Right-click context menu on cells
+│   │   ├── StatsBar.tsx                 # KPI indicators & coverage
+│   │   └── DatePickerPopover.tsx        # Calendar picker popover
+│   ├── firebase.ts                      # Firestore configuration and helpers
+│   ├── types.ts                         # TypeScript interfaces (Agent, Shift, HistoryAction...)
+│   ├── utils/
+│   │   ├── dateUtils.ts                 # Date manipulation utilities
+│   │   └── shiftUtils.ts                # Shift hours, colors and styles calculations
+│   ├── App.tsx                          # Root component orchestrating state
+│   └── main.tsx                         # React entry point
+├── server.ts                            # Express API REST server + Vite middleware integration
+├── firestore.rules                      # Firestore security rules
+├── firebase-blueprint.json              # Firestore collections schema
+├── package.json                         # Dependencies and scripts
+└── tsconfig.json                        # TypeScript configuration
+```
+
+---
+
+## 📄 License
+Proprietary - Richard Digonal
+
+---
+
+---
+
+# CORTEX Planification
+
+Application moderne, réactive et collaborative de planification des équipes et des agents de support/opérations, inspirée de l'ergonomie d'Excel avec colonnes figées, recopie intelligente, synchronisation et une API REST intuitive.
 
 ---
 

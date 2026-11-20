@@ -144,3 +144,21 @@ export function formatFullFrenchDate(d: Date): string {
   const year = d.getFullYear();
   return `${dayName} ${dayNum} ${monthName} ${year}`;
 }
+
+/**
+ * Return array of YYYY-MM-DD date strings between start and end inclusive
+ */
+export function getDatesBetween(startDateStr: string, endDateStr: string): string[] {
+  const result: string[] = [];
+  const start = parseDateStr(startDateStr);
+  const end = parseDateStr(endDateStr);
+  if (isNaN(start.getTime()) || isNaN(end.getTime()) || start > end) {
+    return result;
+  }
+  const curr = new Date(start);
+  while (curr <= end) {
+    result.push(formatToDateStr(curr));
+    curr.setDate(curr.getDate() + 1);
+  }
+  return result;
+}

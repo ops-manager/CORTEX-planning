@@ -1,4 +1,4 @@
-import { Agent } from '../types';
+import { Agent, Shift } from '../types';
 
 /**
  * Remove accents/diacritics and normalize for comparison
@@ -9,6 +9,37 @@ function normalizeString(str: string): string {
     .replace(/[\u0300-\u036f]/g, '')
     .toLowerCase()
     .trim();
+}
+
+/**
+ * Normalizes a shift code from an imported CSV or text data:
+ * - Removes surrounding single or double quotes
+ * - Strips all internal and external spaces/whitespace characters
+ *   (e.g., "S1 h" -> "S1h", "M 2 e" -> "M2e", "OFF " -> "OFF", "S 1 h" -> "S1h")
+ * - If a list of known shifts is provided, canonicalizes casing to match the registered shift
+ *   (e.g., "s1h" -> "S1h", "m1a" -> "M1a", "off" -> "OFF")
+ */
+export function normalizeShiftCode(val: string, existingShifts?: Shift[]): string {
+  if (!val) return '';
+
+  // Remove surrounding quotes and all whitespace characters
+  // (\s includes space, tab, newline, form feed, non-breaking space \u00A0, and other Unicode spaces)
+  const cleaned = val
+    .replace(/^["']|["']$/g, '')
+    .replace(/[\s\u00A0\u1680\u2000-\u200B\u2028\u2029\u202F\u205F\u3000\uFEFF]+/g, '')
+    .trim();
+
+  if (!cleaned) return '';
+
+  // Canonicalize case if matching an existing shift code
+  if (existingShifts && existingShifts.length > 0) {
+    const matched = existingShifts.find(s => s.code.toLowerCase() === cleaned.toLowerCase());
+    if (matched) {
+      return matched.code;
+    }
+  }
+
+  return cleaned;
 }
 
 /**
@@ -143,6 +174,7 @@ export interface CSVImportResult {
   updates: Record<string, string>;
   cellsCount: number;
   agentsMatchedCount: number;
+  cleanedCodesCount: number;
   dateRange: { start: string; end: string } | null;
   warnings: string[];
 }
@@ -150,20 +182,26 @@ export interface CSVImportResult {
 /**
  * Import planning data from CSV according to the CORTEX CSV export model.
  * Format: ['ID Agent', 'Nom Agent', 'Équipe', 'Station', Dates...]
+ *
+ * Automatically removes all spaces inside shift codes (e.g. "S1 h" becomes "S1h")
+ * and canonicalizes codes against existing shifts when provided.
  */
 export function processPlanningCSV(
   csvText: string,
-  existingAgents: Agent[]
+  existingAgents: Agent[],
+  existingShifts?: Shift[]
 ): CSVImportResult {
   const rows = parseCSV(csvText);
   const updates: Record<string, string> = {};
   const warnings: string[] = [];
+  let cleanedCodesCount = 0;
 
   if (rows.length < 2) {
     return {
       updates: {},
       cellsCount: 0,
       agentsMatchedCount: 0,
+      cleanedCodesCount: 0,
       dateRange: null,
       warnings: ['Le fichier CSV est vide ou ne contient pas de données valides.']
     };
@@ -187,6 +225,7 @@ export function processPlanningCSV(
       updates: {},
       cellsCount: 0,
       agentsMatchedCount: 0,
+      cleanedCodesCount: 0,
       dateRange: null,
       warnings: ['Aucune colonne de date (ex: 25/08/2026 ou 2026-08-25) détectée dans les en-têtes.']
     };
@@ -271,8 +310,16 @@ export function processPlanningCSV(
 
     // Apply shifts for all dates in this row
     for (const { colIndex, dateStr } of dateColIndices) {
-      const rawVal = (row[colIndex] || '').replace(/^["']|["']$/g, '').trim();
-      updates[`${matchedAgent.id}_${dateStr}`] = rawVal;
+      const rawVal = row[colIndex] || '';
+      const cleanVal = normalizeShiftCode(rawVal, existingShifts);
+
+      // Detect if shift code had internal spaces that were stripped (e.g. "S1 h" -> "S1h")
+      const trimmedRaw = rawVal.replace(/^["']|["']$/g, '').trim();
+      if (trimmedRaw !== '' && trimmedRaw !== cleanVal && /\s/.test(trimmedRaw)) {
+        cleanedCodesCount++;
+      }
+
+      updates[`${matchedAgent.id}_${dateStr}`] = cleanVal;
     }
   }
 
@@ -280,6 +327,7 @@ export function processPlanningCSV(
     updates,
     cellsCount: Object.keys(updates).length,
     agentsMatchedCount: matchedAgentsCount,
+    cleanedCodesCount,
     dateRange: { start: startDate, end: endDate },
     warnings: warnings.slice(0, 5) // keep max 5 warnings for clean feedback
   };

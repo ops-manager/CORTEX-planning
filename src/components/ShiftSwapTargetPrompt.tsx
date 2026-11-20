@@ -13,25 +13,27 @@ import {
 import { respondToSwapRequestAsTarget } from '../firebase';
 
 interface ShiftSwapTargetPromptProps {
-  pendingRequests: ShiftSwapRequest[];
-  currentUser: AppUser;
-  shifts: Shift[];
+  pendingRequests?: ShiftSwapRequest[];
+  currentUser?: AppUser | null;
+  shifts?: Shift[];
   onActionComplete?: () => void;
 }
 
 export const ShiftSwapTargetPrompt: React.FC<ShiftSwapTargetPromptProps> = ({
-  pendingRequests,
+  pendingRequests = [],
   currentUser,
-  shifts,
+  shifts = [],
   onActionComplete
 }) => {
   const [isProcessing, setIsProcessing] = useState<string | null>(null);
   const [isMinimized, setIsMinimized] = useState<boolean>(false);
 
-  if (pendingRequests.length === 0) return null;
+  const safeRequests = Array.isArray(pendingRequests) ? pendingRequests : [];
+  if (safeRequests.length === 0 || !currentUser) return null;
 
   // Current active request being reviewed (first one)
-  const currentReq = pendingRequests[0];
+  const currentReq = safeRequests[0];
+  if (!currentReq) return null;
 
   const handleDecision = async (accepted: boolean) => {
     try {
@@ -116,9 +118,9 @@ export const ShiftSwapTargetPrompt: React.FC<ShiftSwapTargetPromptProps> = ({
             <span>Accepter l'échange</span>
           </button>
 
-          {pendingRequests.length > 1 && (
+          {safeRequests.length > 1 && (
             <span className="text-[10px] text-amber-400 font-mono-code ml-1 bg-amber-950/80 px-2 py-1 rounded border border-amber-700/50">
-              +{pendingRequests.length - 1} autre(s)
+              +{safeRequests.length - 1} autre(s)
             </span>
           )}
 

@@ -25,7 +25,7 @@ interface ShiftModalProps {
   onClose: () => void;
   onSave: (shiftData: Shift) => Promise<void>;
   initialShift?: Shift | null;
-  existingShifts: Shift[];
+  existingShifts?: Shift[];
 }
 
 export const ShiftModal: React.FC<ShiftModalProps> = ({
@@ -33,9 +33,11 @@ export const ShiftModal: React.FC<ShiftModalProps> = ({
   onClose,
   onSave,
   initialShift,
-  existingShifts
+  existingShifts = []
 }) => {
   const isEditing = Boolean(initialShift);
+  const safeShifts = Array.isArray(existingShifts) ? existingShifts : [];
+  const safeShiftsCount = safeShifts.length;
 
   const [code, setCode] = useState('');
   const [label, setLabel] = useState('');
@@ -74,7 +76,7 @@ export const ShiftModal: React.FC<ShiftModalProps> = ({
       setHidden(Boolean(initialShift.hidden));
       setDefaultPause(initialShift.defaultPause || '');
       setDefaultMissionId(initialShift.defaultMissionId || '');
-      setOrder(initialShift.order ?? existingShifts.length);
+      setOrder(initialShift.order ?? safeShiftsCount);
     } else {
       setCode('');
       setLabel('');
@@ -87,10 +89,10 @@ export const ShiftModal: React.FC<ShiftModalProps> = ({
       setHidden(false);
       setDefaultPause('');
       setDefaultMissionId('');
-      setOrder(existingShifts.length);
+      setOrder(safeShiftsCount);
     }
     setError(null);
-  }, [initialShift, isOpen, existingShifts.length]);
+  }, [initialShift, isOpen, safeShiftsCount]);
 
   if (!isOpen) return null;
 

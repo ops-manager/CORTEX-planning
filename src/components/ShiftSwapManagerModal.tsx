@@ -17,26 +17,36 @@ import { respondToSwapRequestAsManager } from '../firebase';
 interface ShiftSwapManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  pendingManagerRequests: ShiftSwapRequest[];
-  currentUser: AppUser;
-  planning: Record<string, string>;
+  pendingManagerRequests?: ShiftSwapRequest[];
+  requests?: ShiftSwapRequest[];
+  currentUser?: AppUser | null;
+  planning?: Record<string, string>;
   onSwapApproved?: (newPlanning: Record<string, string>) => void;
+  onManagerApprovedSwap?: (appliedUpdates: Record<string, string>, actionDesc: string) => void;
 }
 
 export const ShiftSwapManagerModal: React.FC<ShiftSwapManagerModalProps> = ({
   isOpen,
   onClose,
-  pendingManagerRequests,
+  pendingManagerRequests = [],
+  requests,
   currentUser,
-  planning,
-  onSwapApproved
+  planning = {},
+  onSwapApproved,
+  onManagerApprovedSwap
 }) => {
   const [processingId, setProcessingId] = useState<string | null>(null);
   const [notification, setNotification] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
 
+  const allIncoming = pendingManagerRequests && pendingManagerRequests.length > 0
+    ? pendingManagerRequests
+    : (requests || []);
+  const safeRequests = Array.isArray(allIncoming) ? allIncoming : [];
+
   if (!isOpen) return null;
 
   const handleDecision = async (requestId: string, approved: boolean) => {
+    if (!currentUser) return;
     try {
       setProcessingId(requestId);
       const result = await respondToSwapRequestAsManager(requestId, approved, currentUser, planning);
@@ -44,6 +54,9 @@ export const ShiftSwapManagerModal: React.FC<ShiftSwapManagerModalProps> = ({
       if (approved && result.updatedPlanning) {
         if (onSwapApproved) {
           onSwapApproved(result.updatedPlanning);
+        }
+        if (onManagerApprovedSwap) {
+          onManagerApprovedSwap(result.updatedPlanning, `Échange d'horaires validé par le manager`);
         }
         setNotification({
           message: 'Échange validé avec succès ! Le planning a été mis à jour automatiquement.',
@@ -110,7 +123,7 @@ export const ShiftSwapManagerModal: React.FC<ShiftSwapManagerModalProps> = ({
 
         {/* Modal Content */}
         <div className="p-6 space-y-4 overflow-y-auto flex-1 text-sm text-slate-200">
-          {pendingManagerRequests.length === 0 ? (
+          {safeRequests.length === 0 ? (
             <div className="py-12 text-center text-slate-400 space-y-3">
               <div className="w-12 h-12 rounded-full bg-slate-800/80 border border-slate-700 flex items-center justify-center mx-auto text-slate-500">
                 <CheckCircle2 className="w-6 h-6 text-emerald-500/60" />
@@ -122,7 +135,7 @@ export const ShiftSwapManagerModal: React.FC<ShiftSwapManagerModalProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
-              {pendingManagerRequests.map((req) => (
+              {safeRequests.map((req) => (
                 <div
                   key={req.id}
                   id={`manager-swap-card-${req.id}`}

@@ -20,7 +20,7 @@ import {
 interface AgentManagerModalProps {
   isOpen: boolean;
   onClose: () => void;
-  agents: Agent[];
+  agents?: Agent[];
   onCreateAgent: (agent: Agent) => Promise<void>;
   onUpdateAgent: (id: string, updates: Partial<Agent>) => Promise<void>;
   onDeleteAgent: (id: string) => Promise<void>;
@@ -30,7 +30,7 @@ interface AgentManagerModalProps {
 export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
   isOpen,
   onClose,
-  agents,
+  agents = [],
   onCreateAgent,
   onUpdateAgent,
   onDeleteAgent,
@@ -38,6 +38,8 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
 }) => {
   const [search, setSearch] = useState('');
   const [selectedTeamFilter, setSelectedTeamFilter] = useState<string>('ALL');
+
+  const safeAgents = Array.isArray(agents) ? agents : [];
 
   // Sub-modal states
   const [editingAgent, setEditingAgent] = useState<Agent | null>(null);
@@ -63,7 +65,8 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
     const teamMap: Record<string, Agent[]> = {};
     const teamNames: string[] = [];
 
-    agents.forEach(agent => {
+    safeAgents.forEach(agent => {
+      if (!agent) return;
       const t = agent.team || 'Sans Équipe';
       if (!teamMap[t]) {
         teamMap[t] = [];
@@ -77,7 +80,7 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
     });
 
     return { teamMap, teamNames };
-  }, [agents]);
+  }, [safeAgents]);
 
   // Reorder and persist helper
   const reorderAndPersist = (teamMap: Record<string, Agent[]>, teamNames: string[]) => {
@@ -281,7 +284,7 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
                   : 'bg-slate-800 text-slate-400 hover:text-slate-200 hover:bg-slate-700'}
               `}
             >
-              Toutes ({agents.length})
+              Toutes ({safeAgents.length})
             </button>
             {teams.teamNames.map(t => (
               <button
@@ -304,10 +307,12 @@ export const AgentManagerModal: React.FC<AgentManagerModalProps> = ({
         <div className="flex-1 overflow-y-auto p-6 divide-y divide-slate-800/60">
           {teams.teamNames.map(teamName => {
             const teamAgents = (teams.teamMap[teamName] || []).filter(a => {
+              if (!a) return false;
+              const searchLower = (search || '').toLowerCase();
               const matchesSearch = 
-                a.name.toLowerCase().includes(search.toLowerCase()) ||
-                a.station.toLowerCase().includes(search.toLowerCase()) ||
-                a.team.toLowerCase().includes(search.toLowerCase());
+                (a.name || '').toLowerCase().includes(searchLower) ||
+                (a.station || '').toLowerCase().includes(searchLower) ||
+                (a.team || '').toLowerCase().includes(searchLower);
               const matchesTeam = selectedTeamFilter === 'ALL' || a.team === selectedTeamFilter;
               return matchesSearch && matchesTeam;
             });

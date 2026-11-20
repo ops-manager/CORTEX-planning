@@ -7,7 +7,7 @@ interface AgentModalProps {
   onClose: () => void;
   onSave: (agentData: Agent) => Promise<void>;
   initialAgent?: Agent | null;
-  existingAgents: Agent[];
+  existingAgents?: Agent[];
   defaultTeam?: string;
 }
 
@@ -16,10 +16,12 @@ export const AgentModal: React.FC<AgentModalProps> = ({
   onClose,
   onSave,
   initialAgent,
-  existingAgents,
+  existingAgents = [],
   defaultTeam
 }) => {
   const isEditing = Boolean(initialAgent);
+  const safeAgents = Array.isArray(existingAgents) ? existingAgents : [];
+  const safeAgentsCount = safeAgents.length;
 
   const [name, setName] = useState('');
   const [team, setTeam] = useState('Paris');
@@ -33,38 +35,38 @@ export const AgentModal: React.FC<AgentModalProps> = ({
   // Extract existing teams & stations
   const existingTeams = React.useMemo(() => {
     const set = new Set<string>();
-    existingAgents.forEach(a => {
-      if (a.team) set.add(a.team);
+    safeAgents.forEach(a => {
+      if (a && a.team) set.add(a.team);
     });
     return Array.from(set);
-  }, [existingAgents]);
+  }, [safeAgents]);
 
   const existingStations = React.useMemo(() => {
     const set = new Set<string>();
-    existingAgents.forEach(a => {
-      if (a.station) set.add(a.station);
+    safeAgents.forEach(a => {
+      if (a && a.station) set.add(a.station);
     });
     return Array.from(set);
-  }, [existingAgents]);
+  }, [safeAgents]);
 
   useEffect(() => {
     if (initialAgent) {
       setName(initialAgent.name || '');
       setTeam(initialAgent.team || 'Paris');
       setStation(initialAgent.station || 'PAR');
-      setOrder(initialAgent.order ?? existingAgents.length);
+      setOrder(initialAgent.order ?? safeAgentsCount);
       setIsNewTeam(false);
       setCustomTeam('');
     } else {
       setName('');
       setTeam(defaultTeam || (existingTeams[0] || 'Paris'));
       setStation(existingStations[0] || 'PAR');
-      setOrder(existingAgents.length);
+      setOrder(safeAgentsCount);
       setIsNewTeam(false);
       setCustomTeam('');
     }
     setError(null);
-  }, [initialAgent, isOpen, defaultTeam, existingAgents.length, existingTeams, existingStations]);
+  }, [initialAgent, isOpen, defaultTeam, safeAgentsCount, existingTeams, existingStations]);
 
   if (!isOpen) return null;
 

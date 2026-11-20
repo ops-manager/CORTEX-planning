@@ -22,6 +22,7 @@ import { ShiftSwapTargetPrompt } from './components/ShiftSwapTargetPrompt';
 import { ShiftSwapManagerModal } from './components/ShiftSwapManagerModal';
 import { ShiftSwapAdvisorToasts } from './components/ShiftSwapAdvisorToasts';
 import { ShiftSwapHistoryModal } from './components/ShiftSwapHistoryModal';
+import { CycleGenerationModal } from './components/CycleGenerationModal';
 import { PendingApprovalView } from './components/PendingApprovalView';
 import { LoginPage } from './components/LoginPage';
 import { CheckCircle2, AlertTriangle, X } from 'lucide-react';
@@ -202,6 +203,7 @@ export default function App() {
   const [isSwapHistoryModalOpen, setIsSwapHistoryModalOpen] = useState<boolean>(false);
   const [swapModalTargetAgent, setSwapModalTargetAgent] = useState<Agent | null>(null);
   const [swapModalSelectedDates, setSwapModalSelectedDates] = useState<string[]>([]);
+  const [isCycleModalOpen, setIsCycleModalOpen] = useState<boolean>(false);
 
   // 4. Undo / Redo History Stack
   const [historyStack, setHistoryStack] = useState<HistoryAction[]>([]);
@@ -604,11 +606,23 @@ export default function App() {
     handleUpdatePlanning(updates, 'Effacer sélection');
   }, [selectionRange, visibleAgentIds, agents, dateStrings, handleUpdatePlanning]);
 
-  // Auto Generate cyclical 24/7 rotation pattern
+  // Auto Generate cyclical 24/7 rotation pattern - Opens configuration modal
   const handleAutoGeneratePattern = useCallback(() => {
-    const newSchedule = generateInitialSchedule(agents, dateStrings);
-    handleUpdatePlanning(newSchedule, 'Génération cycle roulement');
-  }, [agents, dateStrings, handleUpdatePlanning]);
+    setIsCycleModalOpen(true);
+  }, []);
+
+  // Apply cyclical rotation pattern to non-empty cells
+  const handleApplyCycle = useCallback((updates: Record<string, string>, description: string) => {
+    handleUpdatePlanning(updates, description);
+    setImportNotification({
+      type: 'success',
+      title: 'Cycle de roulement généré',
+      details: description
+    });
+    setTimeout(() => {
+      setImportNotification(prev => prev?.type === 'success' ? null : prev);
+    }, 6000);
+  }, [handleUpdatePlanning]);
 
   // Jump to Today
   const handleJumpToday = useCallback(() => {
@@ -677,7 +691,7 @@ export default function App() {
           return;
         }
 
-        const result = processPlanningCSV(text, agents);
+        const result = processPlanningCSV(text, agents, shifts);
 
         if (result.cellsCount === 0) {
           setImportNotification({
@@ -707,10 +721,14 @@ export default function App() {
           }
         }
 
+        const cleanedDetails = result.cleanedCodesCount > 0 
+          ? ` (${result.cleanedCodesCount} code(s) avec espaces normalisés, ex: "S1 h" → "S1h")`
+          : '';
+
         setImportNotification({
           type: 'success',
           title: 'Importation réussie',
-          details: `${result.cellsCount} affectations importées pour ${result.agentsMatchedCount} agent(s).${result.dateRange ? ` Période: ${result.dateRange.start} au ${result.dateRange.end}` : ''}`,
+          details: `${result.cellsCount} affectations importées pour ${result.agentsMatchedCount} agent(s).${cleanedDetails}${result.dateRange ? ` Période: ${result.dateRange.start} au ${result.dateRange.end}` : ''}`,
           warnings: result.warnings.length > 0 ? result.warnings : undefined
         });
 
@@ -1032,6 +1050,8 @@ export default function App() {
           isOpen={isSwapManagerModalOpen}
           onClose={() => setIsSwapManagerModalOpen(false)}
           requests={pendingManagerRequests}
+          pendingManagerRequests={pendingManagerRequests}
+          planning={planning}
           currentUser={currentUserProfile || currentUser}
           onManagerApprovedSwap={(appliedUpdates, actionDesc) => {
             handleUpdatePlanning(appliedUpdates, actionDesc);
@@ -1046,6 +1066,21 @@ export default function App() {
           onClose={() => setIsSwapHistoryModalOpen(false)}
           requests={swapRequests}
           currentUser={currentUserProfile || currentUser}
+          agents={agents}
+          isAdminOrManager={Boolean(currentUserProfile && ['admin', 'superadmin', 'manager'].includes(currentUserProfile.role))}
+        />
+      )}
+
+      {/* 10. CYCLE GENERATION MODAL */}
+      {isCycleModalOpen && (
+        <CycleGenerationModal
+          isOpen={isCycleModalOpen}
+          onClose={() => setIsCycleModalOpen(false)}
+          agents={agents}
+          shifts={shifts}
+          planning={planning}
+          visibleDateStrings={dateStrings}
+          onApplyCycle={handleApplyCycle}
         />
       )}
     </div>

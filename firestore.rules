@@ -76,7 +76,7 @@ service cloud.firestore {
 
     // 6. Shift Swap Requests collection
     match /swap_requests/{requestId} {
-      allow read: if isSignedIn();
+      allow read: if true;
       allow create: if isSignedIn();
       allow update: if isSignedIn();
       allow delete: if isSuperAdmin() || isAdmin() || isManager();

@@ -11,20 +11,24 @@ import {
 import { acknowledgeSwapNotification } from '../firebase';
 
 interface ShiftSwapAdvisorToastsProps {
-  requests: ShiftSwapRequest[];
-  currentUser: AppUser;
+  requests?: ShiftSwapRequest[];
+  currentUser?: AppUser | null;
 }
 
 export const ShiftSwapAdvisorToasts: React.FC<ShiftSwapAdvisorToastsProps> = ({
-  requests,
+  requests = [],
   currentUser
 }) => {
+  const safeRequests = Array.isArray(requests) ? requests : [];
+  if (!currentUser || safeRequests.length === 0) return null;
+
   // Filter notifications where the current user is the requester and status has been updated and not yet acknowledged
-  const relevantAdvisedRequests = requests.filter((req) => {
+  const relevantAdvisedRequests = safeRequests.filter((req) => {
+    if (!req) return false;
     const isRequester = 
       req.requesterUid === currentUser.uid || 
       (currentUser.agentId && req.requesterAgentId === currentUser.agentId) ||
-      (currentUser.email && req.requesterEmail.toLowerCase() === currentUser.email.toLowerCase());
+      (currentUser.email && req.requesterEmail && req.requesterEmail.toLowerCase() === currentUser.email.toLowerCase());
 
     if (!isRequester) return false;
     if (req.requesterNotified) return false;
@@ -46,19 +50,20 @@ export const ShiftSwapAdvisorToasts: React.FC<ShiftSwapAdvisorToastsProps> = ({
         let bgColor = 'bg-slate-900/95';
         let title = "Mise à jour d'échange";
         let message = '';
+        const datesLabel = Array.isArray(req.dates) ? req.dates.join(', ') : '';
 
         if (isApproved) {
           borderColor = 'border-emerald-500/70';
           title = "Échange de shifts validé ! 🎉";
-          message = `Votre échange avec ${req.targetAgentName} pour le(s) ${req.dates.join(', ')} a été validé par la direction et appliqué au planning.`;
+          message = `Votre échange avec ${req.targetAgentName || 'votre collègue'} pour le(s) ${datesLabel} a été validé par la direction et appliqué au planning.`;
         } else if (isTargetRejected) {
           borderColor = 'border-rose-500/70';
           title = "Demande d'échange refusée";
-          message = `L'agent ${req.targetAgentName} a refusé votre demande d'échange pour le(s) ${req.dates.join(', ')}.`;
+          message = `L'agent ${req.targetAgentName || 'sollicité'} a refusé votre demande d'échange pour le(s) ${datesLabel}.`;
         } else if (isManagerRejected) {
           borderColor = 'border-amber-500/70';
           title = "Échange refusé par le manager";
-          message = `Votre échange avec ${req.targetAgentName} pour le(s) ${req.dates.join(', ')} a été refusé par la direction.`;
+          message = `Votre échange avec ${req.targetAgentName || 'votre collègue'} pour le(s) ${datesLabel} a été refusé par la direction.`;
         }
 
         return (

@@ -17,12 +17,15 @@ import { createSwapRequestInFirestore, updateUserAccessInFirestore } from '../fi
 interface ShiftSwapRequestModalProps {
   isOpen: boolean;
   onClose: () => void;
-  currentUser: AppUser;
-  agents: Agent[];
-  shifts: Shift[];
-  planning: Record<string, string>;
-  selectedDates: string[];
-  targetAgent: Agent | null;
+  currentUser?: AppUser | null;
+  agents?: Agent[];
+  shifts?: Shift[];
+  planning?: Record<string, string>;
+  selectedDates?: string[];
+  initialDates?: string[];
+  dates?: any[];
+  targetAgent?: Agent | null;
+  initialTargetAgent?: Agent | null;
   onSuccess?: () => void;
 }
 
@@ -30,15 +33,27 @@ export const ShiftSwapRequestModal: React.FC<ShiftSwapRequestModalProps> = ({
   isOpen,
   onClose,
   currentUser,
-  agents,
-  shifts,
-  planning,
+  agents = [],
+  shifts = [],
+  planning = {},
   selectedDates,
+  initialDates,
   targetAgent,
+  initialTargetAgent,
   onSuccess
 }) => {
+  const safeAgents = Array.isArray(agents) ? agents : [];
+  const safeShifts = Array.isArray(shifts) ? shifts : [];
+  const safePlanning = planning || {};
+
+  const effectiveDates: string[] = Array.isArray(selectedDates) && selectedDates.length > 0
+    ? selectedDates
+    : (Array.isArray(initialDates) ? initialDates : []);
+
+  const effectiveTargetAgent = targetAgent || initialTargetAgent || null;
+
   // Find current user's bound agent or allow selection
-  const userBoundAgent = agents.find((a) => a.id === currentUser.agentId);
+  const userBoundAgent = safeAgents.find((a) => a && currentUser && a.id === currentUser.agentId);
   const [selectedRequesterAgentId, setSelectedRequesterAgentId] = useState<string>(
     userBoundAgent?.id || ''
   );
@@ -47,12 +62,12 @@ export const ShiftSwapRequestModal: React.FC<ShiftSwapRequestModalProps> = ({
 
   if (!isOpen) return null;
 
-  const requesterAgent = agents.find((a) => a.id === selectedRequesterAgentId) || userBoundAgent;
+  const requesterAgent = safeAgents.find((a) => a && a.id === selectedRequesterAgentId) || userBoundAgent;
 
   // Get shift description helper
   const getShiftInfo = (code?: string) => {
     if (!code) return { label: 'Repos / Non défini', hours: '-' };
-    const s = shifts.find((sh) => sh.code.toUpperCase() === code.toUpperCase());
+    const s = safeShifts.find((sh) => sh && sh.code && sh.code.toUpperCase() === code.toUpperCase());
     return {
       label: s?.label || code,
       hours: s?.hours || 'Heures standard'
@@ -63,22 +78,27 @@ export const ShiftSwapRequestModal: React.FC<ShiftSwapRequestModalProps> = ({
     e.preventDefault();
     setErrorMsg(null);
 
+    if (!currentUser) {
+      setErrorMsg('Veuillez vous connecter pour envoyer une demande.');
+      return;
+    }
+
     if (!requesterAgent) {
       setErrorMsg('Veuillez sélectionner votre profil agent pour envoyer la demande.');
       return;
     }
 
-    if (!targetAgent) {
+    if (!effectiveTargetAgent) {
       setErrorMsg('Agent destinataire non sélectionné.');
       return;
     }
 
-    if (requesterAgent.id === targetAgent.id) {
+    if (requesterAgent.id === effectiveTargetAgent.id) {
       setErrorMsg('Vous ne pouvez pas faire une demande d\'échange avec vous-même.');
       return;
     }
 
-    if (selectedDates.length === 0) {
+    if (effectiveDates.length === 0) {
       setErrorMsg('Aucune date sélectionnée pour l\'échange.');
       return;
     }
@@ -98,9 +118,9 @@ export const ShiftSwapRequestModal: React.FC<ShiftSwapRequestModalProps> = ({
       const requesterShifts: Record<string, string> = {};
       const targetShifts: Record<string, string> = {};
 
-      selectedDates.forEach((d) => {
-        requesterShifts[d] = planning[`${requesterAgent.id}_${d}`] || '';
-        targetShifts[d] = planning[`${targetAgent.id}_${d}`] || '';
+      effectiveDates.forEach((d) => {
+        requesterShifts[d] = safePlanning[`${requesterAgent.id}_${d}`] || '';
+        targetShifts[d] = safePlanning[`${effectiveTargetAgent.id}_${d}`] || '';
       });
 
       await createSwapRequestInFirestore({
@@ -109,9 +129,9 @@ export const ShiftSwapRequestModal: React.FC<ShiftSwapRequestModalProps> = ({
         requesterName: currentUser.displayName || requesterAgent.name,
         requesterAgentId: requesterAgent.id,
         requesterAgentName: requesterAgent.name,
-        targetAgentId: targetAgent.id,
-        targetAgentName: targetAgent.name,
-        dates: [...selectedDates].sort(),
+        targetAgentId: effectiveTargetAgent.id,
+        targetAgentName: effectiveTargetAgent.name,
+        dates: [...effectiveDates].sort(),
         requesterShifts,
         targetShifts,
         status: 'pending_target',
@@ -210,8 +230,8 @@ export const ShiftSwapRequestModal: React.FC<ShiftSwapRequestModalProps> = ({
             </label>
             <div className="p-3 bg-slate-950/80 border border-slate-800 rounded-xl flex items-center justify-between">
               <div>
-                <div className="font-semibold text-white text-sm">{targetAgent?.name || 'Non spécifié'}</div>
-                <div className="text-xs text-slate-400">Équipe : {targetAgent?.team || 'N/A'} · Station : {targetAgent?.station || 'N/A'}</div>
+                <div className="font-semibold text-white text-sm">{effectiveTargetAgent?.name || 'Non spécifié'}</div>
+                <div className="text-xs text-slate-400">Équipe : {effectiveTargetAgent?.team || 'N/A'} · Station : {effectiveTargetAgent?.station || 'N/A'}</div>
               </div>
               <span className="px-2 py-0.5 bg-indigo-500/20 text-indigo-300 text-[11px] font-mono-code rounded-full border border-indigo-500/30">
                 Destinataire
@@ -223,7 +243,7 @@ export const ShiftSwapRequestModal: React.FC<ShiftSwapRequestModalProps> = ({
           <div className="space-y-2">
             <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
               <Calendar className="w-3.5 h-3.5 text-emerald-400" />
-              Dates et shifts concernés ({selectedDates.length} date(s))
+              Dates et shifts concernés ({effectiveDates.length} date(s))
             </label>
             <div className="border border-slate-800 rounded-xl overflow-hidden bg-slate-950/50">
               <table className="w-full text-xs">
@@ -231,14 +251,14 @@ export const ShiftSwapRequestModal: React.FC<ShiftSwapRequestModalProps> = ({
                   <tr className="bg-slate-950 text-slate-400 border-b border-slate-800">
                     <th className="py-2 px-3 text-left font-medium">Date</th>
                     <th className="py-2 px-3 text-center font-medium text-blue-300">Votre shift actuel</th>
-                    <th className="py-2 px-3 text-center font-medium text-indigo-300">Shift de {targetAgent?.name?.split(' ')[0] || 'Dest.'}</th>
+                    <th className="py-2 px-3 text-center font-medium text-indigo-300">Shift de {effectiveTargetAgent?.name?.split(' ')[0] || 'Dest.'}</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {selectedDates.map((dateStr) => {
-                    const reqShift = requesterAgent ? planning[`${requesterAgent.id}_${dateStr}`] : '';
-                    const targShift = targetAgent ? planning[`${targetAgent.id}_${dateStr}`] : '';
-                    const reqInfo逗 = getShiftInfo(reqShift);
+                  {effectiveDates.map((dateStr) => {
+                    const reqShift = requesterAgent ? safePlanning[`${requesterAgent.id}_${dateStr}`] : '';
+                    const targShift = effectiveTargetAgent ? safePlanning[`${effectiveTargetAgent.id}_${dateStr}`] : '';
+                    const reqInfo = getShiftInfo(reqShift);
                     const targInfo = getShiftInfo(targShift);
 
                     return (
@@ -250,7 +270,7 @@ export const ShiftSwapRequestModal: React.FC<ShiftSwapRequestModalProps> = ({
                           <span className="inline-block px-2 py-0.5 bg-blue-950/60 border border-blue-500/40 text-blue-200 rounded font-bold font-mono-code">
                             {reqShift || 'Repos (RH)'}
                           </span>
-                          <span className="block text-[10px] text-slate-500 mt-0.5">{reqInfo逗.hours}</span>
+                          <span className="block text-[10px] text-slate-500 mt-0.5">{reqInfo.hours}</span>
                         </td>
                         <td className="py-2 px-3 text-center">
                           <span className="inline-block px-2 py-0.5 bg-indigo-950/60 border border-indigo-500/40 text-indigo-200 rounded font-bold font-mono-code">

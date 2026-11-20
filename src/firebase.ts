@@ -36,38 +36,97 @@ const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0
 setLogLevel('silent');
 
 if (typeof window !== 'undefined') {
+  const isIdleStreamNoise = (args: any[]) => {
+    try {
+      const msg = args.map(a => {
+        if (typeof a === 'string') return a;
+        if (a instanceof Error) return `${a.name}: ${a.message} ${a.stack || ''}`;
+        try {
+          return `${a?.message || ''} ${String(a)} ${JSON.stringify(a)}`;
+        } catch {
+          return String(a);
+        }
+      }).join(' ');
+
+      return (
+        msg.includes('Disconnecting idle stream') ||
+        msg.includes('Timed out waiting for new targets') ||
+        msg.includes("GrpcConnection RPC 'Listen' stream") ||
+        msg.includes("RPC 'Listen' stream") ||
+        (msg.includes('GrpcConnection') && msg.includes('CANCELLED'))
+      );
+    } catch {
+      return false;
+    }
+  };
+
   const originalConsoleError = console.error;
   console.error = (...args: any[]) => {
-    const msg = args.map(a => (typeof a === 'string' ? a : (a?.message || ''))).join(' ');
-    if (
-      msg.includes('Disconnecting idle stream') ||
-      msg.includes('Timed out waiting for new targets') ||
-      msg.includes("GrpcConnection RPC 'Listen' stream")
-    ) {
-      return;
-    }
+    if (isIdleStreamNoise(args)) return;
     originalConsoleError.apply(console, args);
   };
 
   const originalConsoleWarn = console.warn;
   console.warn = (...args: any[]) => {
-    const msg = args.map(a => (typeof a === 'string' ? a : (a?.message || ''))).join(' ');
-    if (
-      msg.includes('Disconnecting idle stream') ||
-      msg.includes('Timed out waiting for new targets') ||
-      msg.includes("GrpcConnection RPC 'Listen' stream")
-    ) {
-      return;
-    }
+    if (isIdleStreamNoise(args)) return;
     originalConsoleWarn.apply(console, args);
   };
+
+  const originalConsoleInfo = console.info;
+  console.info = (...args: any[]) => {
+    if (isIdleStreamNoise(args)) return;
+    originalConsoleInfo.apply(console, args);
+  };
+
+  const originalConsoleLog = console.log;
+  console.log = (...args: any[]) => {
+    if (isIdleStreamNoise(args)) return;
+    originalConsoleLog.apply(console, args);
+  };
+
+  window.addEventListener('error', (event) => {
+    if (
+      event.message && (
+        event.message.includes('Disconnecting idle stream') ||
+        event.message.includes('Timed out waiting for new targets') ||
+        event.message.includes("GrpcConnection RPC 'Listen' stream")
+      )
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
+
+  window.addEventListener('unhandledrejection', (event) => {
+    const reasonStr = String(event.reason?.message || event.reason || '');
+    if (
+      reasonStr.includes('Disconnecting idle stream') ||
+      reasonStr.includes('Timed out waiting for new targets') ||
+      reasonStr.includes("GrpcConnection RPC 'Listen' stream")
+    ) {
+      event.preventDefault();
+      event.stopPropagation();
+    }
+  }, true);
 }
 
 // Initialize Firestore with specific database ID from config if present
 const firestoreDbId = (firebaseConfig as any).firestoreDatabaseId || undefined;
-export const db = firestoreDbId 
-  ? getFirestore(app, firestoreDbId)
-  : getFirestore(app);
+let firestoreInstance;
+try {
+  firestoreInstance = initializeFirestore(
+    app,
+    {
+      experimentalAutoDetectLongPolling: true,
+    },
+    firestoreDbId
+  );
+} catch {
+  firestoreInstance = firestoreDbId 
+    ? getFirestore(app, firestoreDbId)
+    : getFirestore(app);
+}
+export const db = firestoreInstance;
 
 // Initialize Firebase Authentication
 export const auth = getAuth(app);
@@ -1132,7 +1191,14 @@ export function subscribeToSwapRequests(
     (snap) => {
       const list: ShiftSwapRequest[] = [];
       snap.forEach((d) => {
-        list.push({ id: d.id, ...d.data() } as ShiftSwapRequest);
+        const raw = d.data() || {};
+        list.push({
+          id: d.id,
+          ...raw,
+          dates: Array.isArray(raw.dates) ? raw.dates : (raw.date ? [raw.date] : []),
+          requesterShifts: raw.requesterShifts || {},
+          targetShifts: raw.targetShifts || {},
+        } as ShiftSwapRequest);
       });
       // Sort newest first
       list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());

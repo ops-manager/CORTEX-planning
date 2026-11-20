@@ -562,7 +562,13 @@ export function computePasteUpdates(
       const sourceRow = matrix[r % pasteH] || [];
       const val = sourceRow[c % (sourceRow.length || pasteW)] ?? '';
 
-      updates[`${agentId}_${dateStr}`] = val.trim();
+      // Normalize shift code by removing quotes and internal spaces (e.g. "S1 h" -> "S1h")
+      const cleanVal = val
+        .replace(/^["']|["']$/g, '')
+        .replace(/[\s\u00A0\u1680\u2000-\u200B\u2028\u2029\u202F\u205F\u3000\uFEFF]+/g, '')
+        .trim();
+
+      updates[`${agentId}_${dateStr}`] = cleanVal;
       maxUpdatedRow = Math.max(maxUpdatedRow, curRow);
       maxUpdatedCol = Math.max(maxUpdatedCol, curCol);
     }

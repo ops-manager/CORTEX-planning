@@ -956,9 +956,11 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
               const isCollapsed = collapsedTeams[teamName];
 
               const matchingAgents = teamAgents.filter(ag => {
-                const matchesSearch = ag.name.toLowerCase().includes(agentSearch.toLowerCase()) ||
-                                      ag.station.toLowerCase().includes(agentSearch.toLowerCase()) ||
-                                      ag.team.toLowerCase().includes(agentSearch.toLowerCase());
+                const searchLower = (agentSearch || '').toLowerCase();
+                const matchesSearch = 
+                  (ag?.name || '').toLowerCase().includes(searchLower) ||
+                  (ag?.station || '').toLowerCase().includes(searchLower) ||
+                  (ag?.team || '').toLowerCase().includes(searchLower);
                 return matchesSearch;
               });
 
@@ -1136,8 +1138,9 @@ export const PlanningGrid: React.FC<PlanningGridProps> = ({
                           // Inside active swap request highlight (Amber pulsing glow)
                           const isSwapHighlighted = Boolean(
                             swapHighlight &&
+                            Array.isArray(swapHighlight.dates) &&
                             swapHighlight.dates.includes(d.dateStr) &&
-                            (swapHighlight.agentIds.length === 0 || swapHighlight.agentIds.includes(agent.id))
+                            (!Array.isArray(swapHighlight.agentIds) || swapHighlight.agentIds.length === 0 || swapHighlight.agentIds.includes(agent.id))
                           );
 
                           return (

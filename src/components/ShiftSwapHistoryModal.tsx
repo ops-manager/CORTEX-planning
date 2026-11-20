@@ -18,22 +18,24 @@ import { deleteSwapRequestInFirestore } from '../firebase';
 interface ShiftSwapHistoryModalProps {
   isOpen: boolean;
   onClose: () => void;
-  requests: ShiftSwapRequest[];
-  currentUser: AppUser;
-  agents: Agent[];
+  requests?: ShiftSwapRequest[];
+  currentUser?: AppUser | null;
+  agents?: Agent[];
   isAdminOrManager: boolean;
 }
 
 export const ShiftSwapHistoryModal: React.FC<ShiftSwapHistoryModalProps> = ({
   isOpen,
   onClose,
-  requests,
+  requests = [],
   currentUser,
-  agents,
+  agents = [],
   isAdminOrManager
 }) => {
   const [filter, setFilter] = useState<'all' | 'my_sent' | 'my_received' | 'pending' | 'approved' | 'rejected'>('all');
   const [search, setSearch] = useState('');
+
+  const safeRequests = Array.isArray(requests) ? requests : [];
 
   if (!isOpen) return null;
 
@@ -74,15 +76,22 @@ export const ShiftSwapHistoryModal: React.FC<ShiftSwapHistoryModalProps> = ({
     }
   };
 
-  const filteredRequests = requests.filter((req) => {
+  const filteredRequests = safeRequests.filter((req) => {
+    if (!req) return false;
     // Role filter
-    const isSentByMe = 
-      req.requesterUid === currentUser.uid || 
-      (currentUser.agentId && req.requesterAgentId === currentUser.agentId);
+    const isSentByMe = Boolean(
+      currentUser && (
+        req.requesterUid === currentUser.uid || 
+        (currentUser.agentId && req.requesterAgentId === currentUser.agentId)
+      )
+    );
     
-    const isReceivedByMe = 
-      (currentUser.agentId && req.targetAgentId === currentUser.agentId) ||
-      (currentUser.email && req.targetEmail?.toLowerCase() === currentUser.email.toLowerCase());
+    const isReceivedByMe = Boolean(
+      currentUser && (
+        (currentUser.agentId && req.targetAgentId === currentUser.agentId) ||
+        (currentUser.email && req.targetEmail?.toLowerCase() === currentUser.email.toLowerCase())
+      )
+    );
 
     if (!isAdminOrManager) {
       if (!isSentByMe && !isReceivedByMe) return false;
@@ -143,7 +152,7 @@ export const ShiftSwapHistoryModal: React.FC<ShiftSwapHistoryModalProps> = ({
                 filter === 'all' ? 'bg-blue-600 text-white shadow-md' : 'bg-slate-800 text-slate-400 hover:text-white'
               }`}
             >
-              Tous ({requests.length})
+              Tous ({safeRequests.length})
             </button>
             <button
               onClick={() => setFilter('my_sent')}

@@ -280,8 +280,8 @@ export const Header: React.FC<HeaderProps> = ({
           </button>
         )}
 
-        {/* Database Access Permissions & Auto-Approval Button */}
-        {isAdminOrManager && onOpenAccessModal && (
+        {/* Database Access Permissions & Auto-Approval Button (Admin only) */}
+        {currentUser?.role === 'admin' && onOpenAccessModal && (
           <button
             id="header-open-access-modal-btn"
             onClick={onOpenAccessModal}

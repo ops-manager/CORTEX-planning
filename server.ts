@@ -1,6 +1,8 @@
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
+import firebaseConfig from "./firebase-applet-config.json";
+import { API_IMPORTED_AGENTS, API_IMPORTED_SHIFTS } from "./src/data/mockData";
 
 interface Agent {
   id: string;
@@ -23,6 +25,8 @@ interface Shift {
   ownerId?: string;
   label?: string;
   color?: string;
+  season?: "all" | "winter" | "summer";
+  hidden?: boolean;
 }
 
 interface ApiToken {
@@ -47,138 +51,84 @@ const DEFAULT_MASTER_TOKEN: ApiToken = {
   isActive: true
 };
 
-import { initializeApp, getApps } from 'firebase/app';
-import { getFirestore, collection, doc, getDocs, setDoc, deleteDoc, writeBatch } from 'firebase/firestore';
-import firebaseConfig from './firebase-applet-config.json';
-
-// Initialize Firebase in server using existing database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d
-const firebaseApp = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
-const firestoreDb = firebaseConfig.firestoreDatabaseId
-  ? getFirestore(firebaseApp, firebaseConfig.firestoreDatabaseId)
-  : getFirestore(firebaseApp);
-
-let agentsState: Agent[] = [];
-let shiftsState: Shift[] = [];
+// In-memory state synchronized by authenticated frontend clients (no Node Firestore gRPC streams)
+let agentsState: Agent[] = [...API_IMPORTED_AGENTS];
+let shiftsState: Shift[] = [...API_IMPORTED_SHIFTS];
 let planningState: Record<string, string> = {};
 let apiTokensState: ApiToken[] = [DEFAULT_MASTER_TOKEN];
 
-let lastFirestoreLoadTime = 0;
-const FIRESTORE_CACHE_TTL_MS = 10000; // 10s TTL cache
-
-// Load agents, shifts, planning and API tokens directly from Firestore (with TTL caching)
-async function loadFromFirestore(force: boolean = false) {
-  const now = Date.now();
-  if (!force && now - lastFirestoreLoadTime < FIRESTORE_CACHE_TTL_MS) {
-    return;
+/**
+ * Verifies a Firebase ID token using the Firebase Auth Identity Toolkit REST API
+ */
+async function verifyFirebaseIdToken(
+  idToken: string
+): Promise<{ valid: boolean; uid?: string; email?: string }> {
+  if (!idToken || !firebaseConfig?.apiKey) {
+    return { valid: false };
   }
-  lastFirestoreLoadTime = now;
-
   try {
-    const [agentsSnap, shiftsSnap, planningSnap, tokensSnap] = await Promise.all([
-      getDocs(collection(firestoreDb, 'agents')),
-      getDocs(collection(firestoreDb, 'shifts')),
-      getDocs(collection(firestoreDb, 'planning')),
-      getDocs(collection(firestoreDb, 'api_tokens'))
-    ]);
-
-    if (!agentsSnap.empty) {
-      const loadedAgents: Agent[] = [];
-      agentsSnap.forEach(d => {
-        loadedAgents.push({ id: d.id, ...d.data() } as Agent);
-      });
-      loadedAgents.sort((a, b) => (a.order || 0) - (b.order || 0));
-      agentsState = loadedAgents;
-    }
-
-    if (!shiftsSnap.empty) {
-      const loadedShifts: Shift[] = [];
-      const seenShiftIds = new Set<string>();
-      shiftsSnap.forEach(d => {
-        const data = d.data();
-        const shiftId = d.id;
-        if (!seenShiftIds.has(shiftId)) {
-          seenShiftIds.add(shiftId);
-          loadedShifts.push({
-            id: shiftId,
-            code: data.code || shiftId,
-            hours: data.hours || '00:00 - 00:00',
-            order: data.order ?? 0,
-            label: data.label || '',
-            color: data.color || '',
-            season: data.season || 'all',
-            hidden: Boolean(data.hidden),
-            defaultPause: data.defaultPause || '',
-            defaultMissionId: data.defaultMissionId || '',
-            ownerId: data.ownerId || '',
-            ...data
-          } as Shift);
-        }
-      });
-      loadedShifts.sort((a, b) => (a.order || 0) - (b.order || 0));
-      shiftsState = loadedShifts;
-    }
-
-    if (!planningSnap.empty) {
-      const docData = planningSnap.docs.find(d => d.id === 'current');
-      if (docData && docData.data().assignments) {
-        planningState = docData.data().assignments;
+    const response = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${encodeURIComponent(firebaseConfig.apiKey)}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken })
       }
+    );
+    if (!response.ok) {
+      return { valid: false };
     }
-
-    if (!tokensSnap.empty) {
-      const loadedTokens: ApiToken[] = [];
-      tokensSnap.forEach(d => {
-        loadedTokens.push({ id: d.id, ...d.data() } as ApiToken);
-      });
-      apiTokensState = loadedTokens;
-    } else {
-      // Seed initial default master token
-      try {
-        await setDoc(doc(firestoreDb, 'api_tokens', DEFAULT_MASTER_TOKEN.id), DEFAULT_MASTER_TOKEN);
-        apiTokensState = [DEFAULT_MASTER_TOKEN];
-      } catch (err) {
-        console.warn('Could not seed default master token to Firestore:', err);
-      }
+    const data = (await response.json()) as {
+      users?: Array<{ localId?: string; email?: string }>;
+    };
+    const user = data.users?.[0];
+    if (!user?.localId) {
+      return { valid: false };
     }
-  } catch (err) {
-    console.warn(`Could not load from Firestore database ${firebaseConfig.firestoreDatabaseId}, using memory cache:`, err);
+    return { valid: true, uid: user.localId, email: user.email };
+  } catch {
+    return { valid: false };
   }
 }
 
-// Track last token write timestamps in memory to prevent write spam
-const lastTokenWriteTimestamps = new Map<string, number>();
-
 /**
- * Token Validation Helper
+ * Extracts raw Bearer / API key token from request headers or query params
  */
-function extractAndValidateToken(req: express.Request): { valid: boolean; tokenObj?: ApiToken; error?: string } {
-  let rawToken: string | undefined;
-
-  // 1. Authorization header: "Bearer <token>" or "<token>"
+function extractRawToken(req: express.Request): string | undefined {
   const authHeader = req.headers.authorization;
   if (authHeader) {
     if (authHeader.toLowerCase().startsWith("bearer ")) {
-      rawToken = authHeader.substring(7).trim();
-    } else {
-      rawToken = authHeader.trim();
+      return authHeader.substring(7).trim();
     }
+    return authHeader.trim();
   }
 
-  // 2. Custom header: x-api-key or x-cortex-token
-  if (!rawToken) {
-    rawToken = (req.headers["x-api-key"] || req.headers["x-cortex-token"]) as string | undefined;
-  }
+  const headerToken = (req.headers["x-api-key"] || req.headers["x-cortex-token"]) as
+    | string
+    | undefined;
+  if (headerToken) return headerToken.trim();
 
-  // 3. Query params: ?apiKey=<token> or ?token=<token> or ?api_key=<token>
-  if (!rawToken) {
-    rawToken = (req.query.apiKey || req.query.token || req.query.api_key) as string | undefined;
-  }
+  const queryToken = (req.query.apiKey || req.query.token || req.query.api_key) as
+    | string
+    | undefined;
+  if (queryToken) return queryToken.trim();
 
-  if (!rawToken || rawToken.trim() === "") {
+  return undefined;
+}
+
+/**
+ * API Token Validation Helper
+ */
+function extractAndValidateToken(
+  req: express.Request
+): { valid: boolean; tokenObj?: ApiToken; error?: string } {
+  const rawToken = extractRawToken(req);
+
+  if (!rawToken || rawToken === "") {
     return { valid: false, error: "Jeton API manquant (Missing API token)" };
   }
 
-  const cleanToken = rawToken.trim();
+  const cleanToken = rawToken;
 
   // Check master token from env if set
   const envToken = process.env.CORTEX_API_TOKEN || process.env.API_SECRET_TOKEN;
@@ -197,9 +147,8 @@ function extractAndValidateToken(req: express.Request): { valid: boolean; tokenO
   }
 
   // Match against loaded tokens in apiTokensState
-  const matched = apiTokensState.find(t => t.token === cleanToken);
+  const matched = apiTokensState.find((t) => t.token === cleanToken);
   if (!matched) {
-    // Fallback: check DEFAULT_MASTER_TOKEN
     if (cleanToken === DEFAULT_MASTER_TOKEN.token) {
       return { valid: true, tokenObj: DEFAULT_MASTER_TOKEN };
     }
@@ -214,17 +163,7 @@ function extractAndValidateToken(req: express.Request): { valid: boolean; tokenO
     return { valid: false, error: "Ce jeton API a expiré" };
   }
 
-  // Update lastUsedAt in memory immediately
   matched.lastUsedAt = new Date().toISOString();
-  
-  // Throttle Firestore write to at most once per 2 minutes per token
-  const lastWrite = lastTokenWriteTimestamps.get(matched.id) || 0;
-  const now = Date.now();
-  if (now - lastWrite > 120000) {
-    lastTokenWriteTimestamps.set(matched.id, now);
-    setDoc(doc(firestoreDb, 'api_tokens', matched.id), { lastUsedAt: matched.lastUsedAt }, { merge: true }).catch(() => {});
-  }
-
   return { valid: true, tokenObj: matched };
 }
 
@@ -237,7 +176,8 @@ const requireApiAuth: express.RequestHandler = (req, res, next) => {
     return res.status(401).json({
       error: "Unauthorized",
       status: 401,
-      message: "Accès refusé. Veuillez fournir un token API valide via l'en-tête 'Authorization: Bearer <TOKEN>', l'en-tête 'x-api-key: <TOKEN>', ou le paramètre d'URL '?apiKey=<TOKEN>'.",
+      message:
+        "Accès refusé. Veuillez fournir un token API valide via l'en-tête 'Authorization: Bearer <TOKEN>', l'en-tête 'x-api-key: <TOKEN>', ou le paramètre d'URL '?apiKey=<TOKEN>'.",
       reason: validation.error,
       help: "Générez ou récupérez vos clés d'API dans l'application CORTEX Planning (Menu Extraction & API > Clés API)."
     });
@@ -247,11 +187,42 @@ const requireApiAuth: express.RequestHandler = (req, res, next) => {
 };
 
 /**
+ * Express Middleware allowing either a valid API token OR an authenticated Firebase ID token
+ */
+const requireApiOrFirebaseAuth: express.RequestHandler = async (req, res, next) => {
+  const apiValidation = extractAndValidateToken(req);
+  if (apiValidation.valid) {
+    (req as any).apiToken = apiValidation.tokenObj;
+    return next();
+  }
+
+  const rawToken = extractRawToken(req);
+  if (rawToken && rawToken.split(".").length === 3) {
+    const fb = await verifyFirebaseIdToken(rawToken);
+    if (fb.valid) {
+      (req as any).firebaseUser = fb;
+      return next();
+    }
+  }
+
+  return res.status(401).json({
+    error: "Unauthorized",
+    status: 401,
+    message: "Authentification requise (Jeton API ou session utilisateur Firebase)."
+  });
+};
+
+/**
  * Normalizes input date strings (e.g. "2026-08-25", "25/08/2026", "today") to standard "YYYY-MM-DD"
  */
 function normalizeDateParam(input?: string): string {
   const now = new Date();
-  if (!input || input.trim() === "" || input.toLowerCase() === "today" || input.toLowerCase() === "ajourdhui") {
+  if (
+    !input ||
+    input.trim() === "" ||
+    input.toLowerCase() === "today" ||
+    input.toLowerCase() === "ajourdhui"
+  ) {
     const yyyy = now.getFullYear();
     const mm = String(now.getMonth() + 1).padStart(2, "0");
     const dd = String(now.getDate()).padStart(2, "0");
@@ -260,7 +231,6 @@ function normalizeDateParam(input?: string): string {
 
   const clean = input.trim();
 
-  // Check YYYY-MM-DD
   const ymdMatch = clean.match(/^(\d{4})[-/. ](\d{1,2})[-/. ](\d{1,2})$/);
   if (ymdMatch) {
     const yyyy = ymdMatch[1];
@@ -269,7 +239,6 @@ function normalizeDateParam(input?: string): string {
     return `${yyyy}-${mm}-${dd}`;
   }
 
-  // Check DD/MM/YYYY
   const dmyMatch = clean.match(/^(\d{1,2})[-/. ](\d{1,2})[-/. ](\d{4})$/);
   if (dmyMatch) {
     const dd = dmyMatch[1].padStart(2, "0");
@@ -286,14 +255,21 @@ function normalizeDateParam(input?: string): string {
     return `${yyyy}-${mm}-${dd}`;
   }
 
-  // Fallback to today
   const yyyy = now.getFullYear();
   const mm = String(now.getMonth() + 1).padStart(2, "0");
   const dd = String(now.getDate()).padStart(2, "0");
   return `${yyyy}-${mm}-${dd}`;
 }
 
-const FRENCH_DAYS = ['Dimanche', 'Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+const FRENCH_DAYS = [
+  "Dimanche",
+  "Lundi",
+  "Mardi",
+  "Mercredi",
+  "Jeudi",
+  "Vendredi",
+  "Samedi"
+];
 
 /**
  * Builds full daily assignments report for a specific date
@@ -306,23 +282,25 @@ function buildDailyAssignmentsReport(
   const targetDate = new Date(yyyy, mm - 1, dd);
   const dayName = FRENCH_DAYS[targetDate.getDay()] || "Inconnu";
 
-  // Build shift dictionary for quick lookup
   const shiftByCode = new Map<string, Shift>();
-  shiftsState.forEach(s => {
+  shiftsState.forEach((s) => {
     if (s.code) {
       shiftByCode.set(s.code.toLowerCase(), s);
     }
   });
 
-  // Filter agents if specified
   let targetAgents = [...agentsState];
   if (options?.team) {
     const teamFilter = options.team.toLowerCase().trim();
-    targetAgents = targetAgents.filter(a => (a.team || "").toLowerCase() === teamFilter);
+    targetAgents = targetAgents.filter(
+      (a) => (a.team || "").toLowerCase() === teamFilter
+    );
   }
   if (options?.station) {
     const stationFilter = options.station.toLowerCase().trim();
-    targetAgents = targetAgents.filter(a => (a.station || "").toLowerCase() === stationFilter);
+    targetAgents = targetAgents.filter(
+      (a) => (a.station || "").toLowerCase() === stationFilter
+    );
   }
 
   let totalAssigned = 0;
@@ -331,7 +309,7 @@ function buildDailyAssignmentsReport(
   const shiftCounts: Record<string, number> = {};
   const compactMap: Record<string, string> = {};
 
-  const assignments = targetAgents.map(agent => {
+  const assignments = targetAgents.map((agent) => {
     const key = `${agent.id}_${dateStr}`;
     const shiftCode = planningState[key] || "";
 
@@ -344,8 +322,10 @@ function buildDailyAssignmentsReport(
     }
 
     const shiftMeta = shiftByCode.get(shiftCode.toLowerCase());
-    const isOffCode = ["OFF", "RH", "CA", "CP", "RC", "R", "ABS", "MAL"].includes(shiftCode.toUpperCase()) ||
-      (shiftMeta?.hours === "00:00 - 00:00");
+    const isOffCode =
+      ["OFF", "RH", "CA", "CP", "RC", "R", "ABS", "MAL"].includes(
+        shiftCode.toUpperCase()
+      ) || shiftMeta?.hours === "00:00 - 00:00";
 
     if (shiftCode) {
       if (isOffCode) {
@@ -358,7 +338,7 @@ function buildDailyAssignmentsReport(
     let startTime = "";
     let endTime = "";
     if (shiftMeta?.hours && shiftMeta.hours.includes("-")) {
-      const parts = shiftMeta.hours.split("-").map(p => p.trim());
+      const parts = shiftMeta.hours.split("-").map((p) => p.trim());
       startTime = parts[0] || "";
       endTime = parts[1] || "";
     }
@@ -397,44 +377,81 @@ async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  // CORS Headers for seamless integration with external apps
   app.use((req, res, next) => {
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
-    res.setHeader("Access-Control-Allow-Headers", "Content-Type, Authorization, X-Requested-With, Accept");
+    res.setHeader(
+      "Access-Control-Allow-Headers",
+      "Content-Type, Authorization, X-Requested-With, Accept, x-api-key, x-cortex-token"
+    );
     if (req.method === "OPTIONS") {
       return res.sendStatus(204);
     }
     next();
   });
 
-  app.use(express.json());
-
-  // Trigger non-blocking Firestore sync at server start
-  loadFromFirestore();
+  app.use(express.json({ limit: "5mb" }));
 
   // 1. Health Check
-  app.get("/api/health", (req, res) => {
-    res.json({ 
-      status: "ok", 
-      agentsCount: agentsState.length, 
-      shiftsCount: shiftsState.length, 
-      assignmentsCount: Object.keys(planningState).length 
+  app.get("/api/health", (_req, res) => {
+    res.json({
+      status: "ok",
+      agentsCount: agentsState.length,
+      shiftsCount: shiftsState.length,
+      assignmentsCount: Object.keys(planningState).length
     });
   });
 
-  // 2. Fetch Daily Shift Assignments (PRIMARY ENDPOINT requested by user)
-  // Supports: /api/shifts/daily?date=2026-08-25, /api/planning/daily, /api/planning/date/:date
+  // 1b. Authenticated client-to-server state synchronization
+  app.post("/api/sync-state", requireApiOrFirebaseAuth, (req, res) => {
+    try {
+      const { agents, shifts, planning } = req.body || {};
+      if (Array.isArray(agents) && agents.length > 0) {
+        agentsState = [...agents].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      }
+      if (Array.isArray(shifts)) {
+        shiftsState = [...shifts].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
+      }
+      if (planning && typeof planning === "object" && !Array.isArray(planning)) {
+        planningState = { ...planning };
+      }
+      res.json({
+        success: true,
+        agentsCount: agentsState.length,
+        shiftsCount: shiftsState.length,
+        assignmentsCount: Object.keys(planningState).length
+      });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || "Invalid sync payload" });
+    }
+  });
+
+  app.post("/api/tokens/sync", requireApiOrFirebaseAuth, (req, res) => {
+    try {
+      const { tokens } = req.body || {};
+      if (!Array.isArray(tokens)) {
+        return res.status(400).json({ error: "tokens array required" });
+      }
+      const validTokens = tokens.filter(
+        (t) => t && typeof t.id === "string" && typeof t.token === "string"
+      );
+      if (validTokens.length > 0) {
+        apiTokensState = validTokens;
+      }
+      res.json({ success: true, count: apiTokensState.length });
+    } catch (err: any) {
+      res.status(400).json({ error: err.message || "Invalid tokens payload" });
+    }
+  });
+
+  // 2. Fetch Daily Shift Assignments
   const handleDailyShiftRequest = async (req: express.Request, res: express.Response) => {
     try {
-      // Refresh planning state from Firestore if available
-      await loadFromFirestore();
-
       const rawDate = (req.params.date || req.query.date || req.query.d) as string | undefined;
       const dateStr = normalizeDateParam(rawDate);
       const team = req.query.team as string | undefined;
       const station = req.query.station as string | undefined;
-      const format = (req.query.format as string || "json").toLowerCase();
+      const format = ((req.query.format as string) || "json").toLowerCase();
 
       const report = buildDailyAssignmentsReport(dateStr, { team, station });
 
@@ -447,12 +464,21 @@ async function startServer() {
       }
 
       if (format === "csv") {
-        const csvHeader = "ID Agent;Nom Agent;Equipe;Station;Date;Code Shift;Horaires;Pause;Statut\n";
-        const csvRows = report.assignments.map(a => 
-          `"${a.agentId}";"${a.agentName}";"${a.team}";"${a.station}";"${report.date}";"${a.shiftCode}";"${a.hours}";"${a.defaultPause}";"${a.isOff ? 'Repos/Congé' : 'Actif'}"`
-        ).join("\n");
+        const csvHeader =
+          "ID Agent;Nom Agent;Equipe;Station;Date;Code Shift;Horaires;Pause;Statut\n";
+        const csvRows = report.assignments
+          .map(
+            (a) =>
+              `"${a.agentId}";"${a.agentName}";"${a.team}";"${a.station}";"${report.date}";"${a.shiftCode}";"${a.hours}";"${a.defaultPause}";"${
+                a.isOff ? "Repos/Congé" : "Actif"
+              }"`
+          )
+          .join("\n");
         res.setHeader("Content-Type", "text/csv; charset=utf-8");
-        res.setHeader("Content-Disposition", `attachment; filename="cortex-shifts-${dateStr}.csv"`);
+        res.setHeader(
+          "Content-Disposition",
+          `attachment; filename="cortex-shifts-${dateStr}.csv"`
+        );
         return res.send(csvHeader + csvRows);
       }
 
@@ -463,18 +489,16 @@ async function startServer() {
     }
   };
 
-  // Main daily routes (Secured with API Token)
   app.get("/api/shifts/daily", requireApiAuth, handleDailyShiftRequest);
   app.get("/api/planning/daily", requireApiAuth, handleDailyShiftRequest);
   app.get("/api/planning/date/:date", requireApiAuth, handleDailyShiftRequest);
   app.get("/api/shifts/date/:date", requireApiAuth, handleDailyShiftRequest);
 
-  // 3. Range Endpoint: GET /api/planning/range?startDate=2026-08-25&endDate=2026-08-31 (Secured)
-  app.get("/api/planning/range", requireApiAuth, async (req, res) => {
+  // 3. Range Endpoint
+  app.get("/api/planning/range", requireApiAuth, (req, res) => {
     try {
-      await loadFromFirestore();
       const startStr = normalizeDateParam(req.query.startDate as string);
-      const endStr = normalizeDateParam(req.query.endDate as string || startStr);
+      const endStr = normalizeDateParam((req.query.endDate as string) || startStr);
       const team = req.query.team as string | undefined;
       const station = req.query.station as string | undefined;
 
@@ -506,20 +530,19 @@ async function startServer() {
   });
 
   // 4. OpenAPI / API Integration Documentation endpoint
-  app.get("/api/docs", (req, res) => {
+  app.get("/api/docs", (_req, res) => {
     res.json({
       title: "CORTEX Operations Planning API",
       version: "1.2.0",
-      description: "API REST sécurisée par jeton API (API Token Authentication) pour extraire les shifts et plannings assignés aux agents.",
+      description:
+        "API REST sécurisée par jeton API (API Token Authentication) pour extraire les shifts et plannings assignés aux agents.",
       authentication: {
         type: "Bearer Token / Header / URL Query",
         headers: [
           "Authorization: Bearer <VOTRE_CLE_API>",
           "x-api-key: <VOTRE_CLE_API>"
         ],
-        queryParams: [
-          "?apiKey=<VOTRE_CLE_API>"
-        ],
+        queryParams: ["?apiKey=<VOTRE_CLE_API>"],
         errorResponse: {
           status: 401,
           error: "Unauthorized",
@@ -533,10 +556,18 @@ async function startServer() {
           security: "API Token Required",
           description: "Récupère tous les shifts assignés aux agents pour une date donnée.",
           parameters: [
-            { name: "date", type: "string", description: "Date au format YYYY-MM-DD ou DD/MM/YYYY (défaut: aujourd'hui)" },
+            {
+              name: "date",
+              type: "string",
+              description: "Date au format YYYY-MM-DD ou DD/MM/YYYY (défaut: aujourd'hui)"
+            },
             { name: "team", type: "string", description: "Filtrer par équipe (ex: Paris, Nice)" },
             { name: "station", type: "string", description: "Filtrer par station (ex: JS, RC, ABN)" },
-            { name: "format", type: "string", description: "Format de sortie: 'json' (défaut), 'compact', 'csv'" }
+            {
+              name: "format",
+              type: "string",
+              description: "Format de sortie: 'json' (défaut), 'compact', 'csv'"
+            }
           ],
           example: "/api/shifts/daily?date=2026-08-30"
         },
@@ -561,7 +592,7 @@ async function startServer() {
         {
           method: "GET",
           path: "/api/tokens",
-          security: "API Token Required",
+          security: "API Token / Auth Required",
           description: "Liste les clés API actives et leurs métadonnées"
         }
       ]
@@ -569,187 +600,144 @@ async function startServer() {
   });
 
   // 5. Agent CRUD APIs (Secured)
-  app.get("/api/agents", requireApiAuth, async (req, res) => {
-    await loadFromFirestore();
+  app.get("/api/agents", requireApiAuth, (_req, res) => {
     res.json(agentsState);
   });
 
-  app.post("/api/agents", requireApiAuth, async (req, res) => {
+  app.post("/api/agents", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const newAgent: Agent = req.body;
       if (!newAgent.id) {
         newAgent.id = "agent_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
       }
-      agentsState.push(newAgent);
-      const agentRef = doc(firestoreDb, 'agents', newAgent.id);
-      await setDoc(agentRef, newAgent);
+      agentsState = [...agentsState.filter((a) => a.id !== newAgent.id), newAgent];
       res.status(201).json(newAgent);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.put("/api/agents/:id", requireApiAuth, async (req, res) => {
+  app.put("/api/agents/:id", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const { id } = req.params;
       const updates = req.body;
-      agentsState = agentsState.map(a => a.id === id ? { ...a, ...updates } : a);
-      const agentRef = doc(firestoreDb, 'agents', id);
-      await setDoc(agentRef, updates, { merge: true });
-      res.json({ success: true, agent: agentsState.find(a => a.id === id) });
+      agentsState = agentsState.map((a) => (a.id === id ? { ...a, ...updates } : a));
+      res.json({ success: true, agent: agentsState.find((a) => a.id === id) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete("/api/agents/:id", requireApiAuth, async (req, res) => {
+  app.delete("/api/agents/:id", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const { id } = req.params;
-      agentsState = agentsState.filter(a => a.id !== id);
-      const agentRef = doc(firestoreDb, 'agents', id);
-      await deleteDoc(agentRef);
+      agentsState = agentsState.filter((a) => a.id !== id);
       res.json({ success: true, id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // Reorder Agents (Internal / App frontend)
-  app.post("/api/agents/reorder", async (req, res) => {
+  app.post("/api/agents/reorder", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const incoming = Array.isArray(req.body) ? req.body : req.body.agents;
       if (!Array.isArray(incoming)) {
         return res.status(400).json({ error: "Format invalide: tableau d'agents requis" });
       }
 
-      // Update in-memory state with sequential order indices
       const updatedAgents: Agent[] = incoming.map((ag: Agent, idx: number) => ({
         ...ag,
         order: idx
       }));
 
       agentsState = updatedAgents;
-
-      // Persist all updated agent orders directly to Firestore
-      const batch = writeBatch(firestoreDb);
-      updatedAgents.forEach((ag) => {
-        const ref = doc(firestoreDb, 'agents', ag.id);
-        batch.set(ref, {
-          ...ag,
-          order: ag.order
-        }, { merge: true });
-      });
-      await batch.commit();
-
       res.json({ success: true, count: updatedAgents.length });
     } catch (err: any) {
-      console.error("Erreur réorganisation agents dans Firestore:", err);
       res.status(500).json({ error: err.message });
     }
   });
 
   // 6. Shift Definitions APIs (Secured)
-  app.get("/api/shifts", requireApiAuth, async (req, res) => {
-    try {
-      await loadFromFirestore(true);
-      res.json(shiftsState);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+  app.get("/api/shifts", requireApiAuth, (_req, res) => {
+    res.json(shiftsState);
   });
 
-  app.post("/api/shifts", requireApiAuth, async (req, res) => {
+  app.post("/api/shifts", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const newShift: Shift = req.body;
       if (!newShift.id) {
         newShift.id = "shift_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
       }
-      const { label, ...cleanShift } = newShift as any;
-      shiftsState.push(cleanShift as Shift);
-      const shiftRef = doc(firestoreDb, 'shifts', cleanShift.id);
-      await setDoc(shiftRef, cleanShift);
-      res.status(201).json(cleanShift);
+      shiftsState = [...shiftsState.filter((s) => s.id !== newShift.id), newShift];
+      res.status(201).json(newShift);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.put("/api/shifts/:id", requireApiAuth, async (req, res) => {
+  app.put("/api/shifts/:id", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const { id } = req.params;
-      const { label, ...updates } = req.body;
-      shiftsState = shiftsState.map(s => s.id === id ? { ...s, ...updates } : s);
-      const shiftRef = doc(firestoreDb, 'shifts', id);
-      await setDoc(shiftRef, updates, { merge: true });
-      res.json({ success: true, shift: shiftsState.find(s => s.id === id) });
+      const updates = req.body;
+      shiftsState = shiftsState.map((s) => (s.id === id ? { ...s, ...updates } : s));
+      res.json({ success: true, shift: shiftsState.find((s) => s.id === id) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  app.delete("/api/shifts/:id", requireApiAuth, async (req, res) => {
+  app.delete("/api/shifts/:id", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const { id } = req.params;
-      shiftsState = shiftsState.filter(s => s.id !== id);
-      const shiftRef = doc(firestoreDb, 'shifts', id);
-      await deleteDoc(shiftRef);
+      shiftsState = shiftsState.filter((s) => s.id !== id);
       res.json({ success: true, id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // 7. Sync and Global Planning State (Secured)
-  app.post("/api/sync-live", requireApiAuth, async (req, res) => {
-    await loadFromFirestore();
-    res.json({ 
-      success: true, 
-      agentsCount: agentsState.length, 
+  // 7. Global Planning State (Secured)
+  app.post("/api/sync-live", requireApiOrFirebaseAuth, (_req, res) => {
+    res.json({
+      success: true,
+      agentsCount: agentsState.length,
       shiftsCount: shiftsState.length,
       assignmentsCount: Object.keys(planningState).length
     });
   });
 
-  app.get("/api/planning", requireApiAuth, (req, res) => {
+  app.get("/api/planning", requireApiAuth, (_req, res) => {
     res.json(planningState);
   });
 
-  app.post("/api/planning", requireApiAuth, (req, res) => {
+  app.post("/api/planning", requireApiOrFirebaseAuth, (req, res) => {
     if (req.body.planning && typeof req.body.planning === "object") {
-      planningState = { ...planningState, ...req.body.planning };
+      planningState = { ...req.body.planning };
     }
     res.json({ success: true, count: Object.keys(planningState).length });
   });
 
-  // 8. API Token Management Endpoints
-  // GET /api/tokens (List tokens)
-  app.get("/api/tokens", async (req, res) => {
-    try {
-      await loadFromFirestore();
-      // Return token metadata
-      const sanitized = apiTokensState.map(t => ({
-        id: t.id,
-        name: t.name,
-        token: t.token,
-        prefix: t.prefix || (t.token.substring(0, 16) + "..."),
-        createdAt: t.createdAt,
-        lastUsedAt: t.lastUsedAt,
-        createdBy: t.createdBy,
-        expiresAt: t.expiresAt,
-        isActive: t.isActive
-      }));
-      res.json(sanitized);
-    } catch (err: any) {
-      res.status(500).json({ error: err.message });
-    }
+  // 8. API Token Management Endpoints (Secured)
+  app.get("/api/tokens", requireApiOrFirebaseAuth, (_req, res) => {
+    const sanitized = apiTokensState.map((t) => ({
+      id: t.id,
+      name: t.name,
+      token: t.token,
+      prefix: t.prefix || t.token.substring(0, 16) + "...",
+      createdAt: t.createdAt,
+      lastUsedAt: t.lastUsedAt,
+      createdBy: t.createdBy,
+      expiresAt: t.expiresAt,
+      isActive: t.isActive
+    }));
+    res.json(sanitized);
   });
 
-  // POST /api/tokens (Generate new API key)
-  app.post("/api/tokens", async (req, res) => {
+  app.post("/api/tokens", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const { name, createdBy, expiresAt } = req.body;
       const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-        .map(b => b.toString(16).padStart(2, "0"))
+        .map((b) => b.toString(16).padStart(2, "0"))
         .join("");
       const tokenSecret = `cortex_live_sec_${randomHex}`;
       const id = `token_${Date.now()}_${randomHex.substring(0, 6)}`;
@@ -767,36 +755,27 @@ async function startServer() {
       };
 
       apiTokensState.push(newToken);
-      const tokenRef = doc(firestoreDb, 'api_tokens', id);
-      await setDoc(tokenRef, newToken);
-
       res.status(201).json(newToken);
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // PUT /api/tokens/:id (Toggle status or rename)
-  app.put("/api/tokens/:id", async (req, res) => {
+  app.put("/api/tokens/:id", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const { id } = req.params;
       const updates = req.body;
-      apiTokensState = apiTokensState.map(t => t.id === id ? { ...t, ...updates } : t);
-      const tokenRef = doc(firestoreDb, 'api_tokens', id);
-      await setDoc(tokenRef, updates, { merge: true });
-      res.json({ success: true, token: apiTokensState.find(t => t.id === id) });
+      apiTokensState = apiTokensState.map((t) => (t.id === id ? { ...t, ...updates } : t));
+      res.json({ success: true, token: apiTokensState.find((t) => t.id === id) });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
     }
   });
 
-  // DELETE /api/tokens/:id (Revoke API key)
-  app.delete("/api/tokens/:id", async (req, res) => {
+  app.delete("/api/tokens/:id", requireApiOrFirebaseAuth, (req, res) => {
     try {
       const { id } = req.params;
-      apiTokensState = apiTokensState.filter(t => t.id !== id);
-      const tokenRef = doc(firestoreDb, 'api_tokens', id);
-      await deleteDoc(tokenRef);
+      apiTokensState = apiTokensState.filter((t) => t.id !== id);
       res.json({ success: true, id });
     } catch (err: any) {
       res.status(500).json({ error: err.message });
@@ -807,13 +786,13 @@ async function startServer() {
   if (process.env.NODE_ENV !== "production") {
     const vite = await createViteServer({
       server: { middlewareMode: true },
-      appType: "spa",
+      appType: "spa"
     });
     app.use(vite.middlewares);
   } else {
     const distPath = path.join(process.cwd(), "dist");
     app.use(express.static(distPath));
-    app.get("*", (req, res) => {
+    app.get("*", (_req, res) => {
       res.sendFile(path.join(distPath, "index.html"));
     });
   }
@@ -824,4 +803,3 @@ async function startServer() {
 }
 
 startServer();
-

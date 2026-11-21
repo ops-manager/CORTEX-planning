@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Agent } from '../types';
+import { auth } from '../firebase';
 import { X, User, Building2, MapPin, Check, AlertCircle } from 'lucide-react';
 
 interface AgentModalProps {
@@ -102,7 +103,7 @@ export const AgentModal: React.FC<AgentModalProps> = ({
         station: cleanStation,
         order: Number(order) || 0,
         defaultMissionId: initialAgent?.defaultMissionId || '',
-        ownerId: initialAgent?.ownerId || 'nJxGjmZvHxZNnaIV5BXiRjiq0Cv2'
+        ownerId: initialAgent?.ownerId || auth.currentUser?.uid || ''
       };
 
       await onSave(agentData);

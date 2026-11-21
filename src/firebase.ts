@@ -1,19 +1,18 @@
 import { initializeApp, getApps } from 'firebase/app';
-import { 
+import {
   getFirestore,
   initializeFirestore,
   setLogLevel,
-  collection, 
-  doc, 
+  collection,
+  doc,
   getDoc,
-  getDocs, 
-  setDoc, 
+  getDocFromServer,
+  getDocs,
+  setDoc,
   deleteDoc,
   writeBatch,
   onSnapshot,
-  Unsubscribe,
-  query,
-  where
+  Unsubscribe
 } from 'firebase/firestore';
 import {
   getAuth,
@@ -22,31 +21,41 @@ import {
   signInWithEmailAndPassword,
   createUserWithEmailAndPassword,
   signOut,
-  onAuthStateChanged,
   User
 } from 'firebase/auth';
 import firebaseConfig from '../firebase-applet-config.json';
-import { Agent, Shift, ApiToken, AppUser, UserRole, UserStatus, AccessControlSettings, PreApprovedEmail, ShiftSwapRequest, SwapRequestStatus } from './types';
+import {
+  Agent,
+  Shift,
+  ApiToken,
+  AppUser,
+  UserRole,
+  UserStatus,
+  AccessControlSettings,
+  ShiftSwapRequest
+} from './types';
 import { API_IMPORTED_AGENTS, generateInitialSchedule } from './data/mockData';
 
 // Initialize Firebase App
 const app = getApps().length === 0 ? initializeApp(firebaseConfig) : getApps()[0];
 
-// Suppress internal stream recycling notices and debug logging
+// Suppress noisy internal stream recycling notices
 setLogLevel('silent');
 
 if (typeof window !== 'undefined') {
   const isIdleStreamNoise = (args: any[]) => {
     try {
-      const msg = args.map(a => {
-        if (typeof a === 'string') return a;
-        if (a instanceof Error) return `${a.name}: ${a.message} ${a.stack || ''}`;
-        try {
-          return `${a?.message || ''} ${String(a)} ${JSON.stringify(a)}`;
-        } catch {
-          return String(a);
-        }
-      }).join(' ');
+      const msg = args
+        .map((a) => {
+          if (typeof a === 'string') return a;
+          if (a instanceof Error) return `${a.name}: ${a.message} ${a.stack || ''}`;
+          try {
+            return `${a?.message || ''} ${String(a)} ${JSON.stringify(a)}`;
+          } catch {
+            return String(a);
+          }
+        })
+        .join(' ');
 
       return (
         msg.includes('Disconnecting idle stream') ||
@@ -83,34 +92,9 @@ if (typeof window !== 'undefined') {
     if (isIdleStreamNoise(args)) return;
     originalConsoleLog.apply(console, args);
   };
-
-  window.addEventListener('error', (event) => {
-    if (
-      event.message && (
-        event.message.includes('Disconnecting idle stream') ||
-        event.message.includes('Timed out waiting for new targets') ||
-        event.message.includes("GrpcConnection RPC 'Listen' stream")
-      )
-    ) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }, true);
-
-  window.addEventListener('unhandledrejection', (event) => {
-    const reasonStr = String(event.reason?.message || event.reason || '');
-    if (
-      reasonStr.includes('Disconnecting idle stream') ||
-      reasonStr.includes('Timed out waiting for new targets') ||
-      reasonStr.includes("GrpcConnection RPC 'Listen' stream")
-    ) {
-      event.preventDefault();
-      event.stopPropagation();
-    }
-  }, true);
 }
 
-// Initialize Firestore with specific database ID from config if present
+// Initialize Firestore with specific database ID and ignoreUndefinedProperties
 const firestoreDbId = (firebaseConfig as any).firestoreDatabaseId || undefined;
 let firestoreInstance;
 try {
@@ -118,13 +102,12 @@ try {
     app,
     {
       experimentalAutoDetectLongPolling: true,
+      ignoreUndefinedProperties: true
     },
     firestoreDbId
   );
 } catch {
-  firestoreInstance = firestoreDbId 
-    ? getFirestore(app, firestoreDbId)
-    : getFirestore(app);
+  firestoreInstance = firestoreDbId ? getFirestore(app, firestoreDbId) : getFirestore(app);
 }
 export const db = firestoreInstance;
 
@@ -132,6 +115,106 @@ export const db = firestoreInstance;
 export const auth = getAuth(app);
 export const googleProvider = new GoogleAuthProvider();
 googleProvider.setCustomParameters({ prompt: 'select_account' });
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write'
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function isPermissionDeniedError(err: unknown): boolean {
+  const code = (err as any)?.code || '';
+  const msg = err instanceof Error ? err.message : String(err || '');
+  return (
+    code === 'permission-denied' ||
+    msg.includes('Missing or insufficient permissions') ||
+    msg.includes('PERMISSION_DENIED')
+  );
+}
+
+export function handleFirestoreError(
+  error: unknown,
+  operationType: OperationType,
+  path: string | null
+): never {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email
+        })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
+
+/**
+ * Validate live connection to Firestore server
+ */
+export async function testConnection(): Promise<void> {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error('Please check your Firebase configuration.');
+    }
+  }
+}
+
+/**
+ * Strip undefined fields before writing to Firestore
+ */
+export function stripUndefined<T extends Record<string, any>>(obj: T): Partial<T> {
+  const cleaned: Record<string, any> = {};
+  Object.keys(obj).forEach((key) => {
+    if (obj[key] !== undefined) {
+      cleaned[key] = obj[key];
+    }
+  });
+  return cleaned as Partial<T>;
+}
+
+/**
+ * Get current authenticated user's Firebase ID token for server API calls
+ */
+export async function getCurrentUserIdToken(): Promise<string | null> {
+  try {
+    if (!auth.currentUser) return null;
+    return await auth.currentUser.getIdToken();
+  } catch {
+    return null;
+  }
+}
 
 /**
  * Sign in with Google Popup
@@ -201,9 +284,10 @@ export const DEFAULT_MASTER_API_TOKEN: ApiToken = {
 };
 
 /**
- * Fetch all shifts directly from Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d
+ * Fetch all shifts directly from Firestore
  */
 export async function getShiftsFromFirestore(): Promise<Shift[]> {
+  if (!auth.currentUser) return [];
   try {
     const shiftsCol = collection(db, SHIFTS_COLLECTION);
     const snap = await getDocs(shiftsCol);
@@ -232,15 +316,19 @@ export async function getShiftsFromFirestore(): Promise<Shift[]> {
     loadedShifts.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
     return loadedShifts;
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.LIST, SHIFTS_COLLECTION);
+    }
     console.warn('Error fetching shifts from Firestore:', err);
     return [];
   }
 }
 
 /**
- * Real-time subscription to the shifts collection in Firestore (ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d)
+ * Real-time subscription to the shifts collection in Firestore
  */
 export function subscribeToShifts(onUpdate: (shifts: Shift[]) => void): Unsubscribe {
+  if (!auth.currentUser) return () => {};
   const shiftsCol = collection(db, SHIFTS_COLLECTION);
   return onSnapshot(
     shiftsCol,
@@ -271,6 +359,9 @@ export function subscribeToShifts(onUpdate: (shifts: Shift[]) => void): Unsubscr
       onUpdate(loadedShifts);
     },
     (err) => {
+      if (isPermissionDeniedError(err)) {
+        handleFirestoreError(err, OperationType.LIST, SHIFTS_COLLECTION);
+      }
       console.warn('Real-time shifts subscription error:', err);
     }
   );
@@ -280,6 +371,7 @@ export function subscribeToShifts(onUpdate: (shifts: Shift[]) => void): Unsubscr
  * Real-time subscription to the agents collection in Firestore
  */
 export function subscribeToAgents(onUpdate: (agents: Agent[]) => void): Unsubscribe {
+  if (!auth.currentUser) return () => {};
   const agentsCol = collection(db, AGENTS_COLLECTION);
   return onSnapshot(
     agentsCol,
@@ -293,6 +385,9 @@ export function subscribeToAgents(onUpdate: (agents: Agent[]) => void): Unsubscr
       onUpdate(loadedAgents);
     },
     (err) => {
+      if (isPermissionDeniedError(err)) {
+        handleFirestoreError(err, OperationType.LIST, AGENTS_COLLECTION);
+      }
       console.warn('Real-time agents subscription error:', err);
     }
   );
@@ -302,6 +397,7 @@ export function subscribeToAgents(onUpdate: (agents: Agent[]) => void): Unsubscr
  * Real-time subscription to planning assignments in Firestore
  */
 export function subscribeToPlanning(onUpdate: (planning: Record<string, string>) => void): Unsubscribe {
+  if (!auth.currentUser) return () => {};
   const planningDocRef = doc(db, 'planning', 'current');
   return onSnapshot(
     planningDocRef,
@@ -311,39 +407,50 @@ export function subscribeToPlanning(onUpdate: (planning: Record<string, string>)
       }
     },
     (err) => {
+      if (isPermissionDeniedError(err)) {
+        handleFirestoreError(err, OperationType.GET, PLANNING_DOC);
+      }
       console.warn('Real-time planning subscription error:', err);
     }
   );
 }
 
 /**
- * Initialize Firestore data and load from Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d
+ * Initialize Firestore data and load from Firestore
  */
 export async function initializeFirestoreIfNeeded(): Promise<{
   agents: Agent[];
   shifts: Shift[];
   planning: Record<string, string>;
 }> {
+  if (!auth.currentUser) {
+    return {
+      agents: API_IMPORTED_AGENTS,
+      shifts: [],
+      planning: {}
+    };
+  }
+
   try {
     const agentsCol = collection(db, AGENTS_COLLECTION);
     const shiftsCol = collection(db, SHIFTS_COLLECTION);
+    const planningRef = doc(db, 'planning', 'current');
 
-    const [agentsSnap, shiftsSnap] = await Promise.all([
+    const [agentsSnap, shiftsSnap, planningSnap] = await Promise.all([
       getDocs(agentsCol),
-      getDocs(shiftsCol)
+      getDocs(shiftsCol),
+      getDoc(planningRef)
     ]);
 
-    // Load agents from Firestore
     const agents: Agent[] = [];
-    agentsSnap.forEach(d => {
+    agentsSnap.forEach((d) => {
       agents.push({ id: d.id, ...d.data() } as Agent);
     });
     agents.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
-    // Load shifts from Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d strictly
     const shifts: Shift[] = [];
     const seenShiftIds = new Set<string>();
-    shiftsSnap.forEach(d => {
+    shiftsSnap.forEach((d) => {
       const data = d.data();
       const shiftId = d.id;
       if (!seenShiftIds.has(shiftId)) {
@@ -367,16 +474,15 @@ export async function initializeFirestoreIfNeeded(): Promise<{
     shifts.sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
 
     let planning: Record<string, string> = {};
-    const planningSnap = await getDocs(collection(db, 'planning'));
-    if (!planningSnap.empty) {
-      const docData = planningSnap.docs.find(d => d.id === 'current');
-      if (docData && docData.data().assignments) {
-        planning = docData.data().assignments;
-      }
+    if (planningSnap.exists() && planningSnap.data()?.assignments) {
+      planning = planningSnap.data().assignments;
     }
 
     return { agents: agents.length > 0 ? agents : API_IMPORTED_AGENTS, shifts, planning };
   } catch (error) {
+    if (isPermissionDeniedError(error)) {
+      handleFirestoreError(error, OperationType.GET, 'agents|shifts|planning/current');
+    }
     console.warn('Error reading from Firestore:', error);
     return {
       agents: API_IMPORTED_AGENTS,
@@ -394,25 +500,26 @@ export async function resetAllDataToFirestore(): Promise<{
   shifts: Shift[];
   planning: Record<string, string>;
 }> {
+  const uid = auth.currentUser?.uid || SUPER_ADMIN_UID;
   try {
-    // 1. Clear existing agents
     const existingAgents = await getDocs(collection(db, AGENTS_COLLECTION));
     const deleteBatch = writeBatch(db);
-    existingAgents.forEach(d => deleteBatch.delete(d.ref));
+    existingAgents.forEach((d) => deleteBatch.delete(d.ref));
     await deleteBatch.commit();
 
-    // 2. Seed Agents
     const agentsBatch = writeBatch(db);
-    API_IMPORTED_AGENTS.forEach(agent => {
+    const seededAgents = API_IMPORTED_AGENTS.map((agent) => ({
+      ...agent,
+      ownerId: uid
+    }));
+    seededAgents.forEach((agent) => {
       const ref = doc(db, AGENTS_COLLECTION, agent.id);
-      agentsBatch.set(ref, agent);
+      agentsBatch.set(ref, stripUndefined(agent));
     });
     await agentsBatch.commit();
 
-    // 3. Keep current shifts from Firestore database
     const currentShifts = await getShiftsFromFirestore();
 
-    // 4. Seed Planning with initial cycle
     const dateStrings: string[] = [];
     const today = new Date();
     for (let i = -5; i <= 35; i++) {
@@ -424,7 +531,7 @@ export async function resetAllDataToFirestore(): Promise<{
       dateStrings.push(`${yyyy}-${mm}-${dd}`);
     }
 
-    const initPlanning = generateInitialSchedule(API_IMPORTED_AGENTS, dateStrings);
+    const initPlanning = generateInitialSchedule(seededAgents, dateStrings);
     const planningRef = doc(db, 'planning', 'current');
     await setDoc(planningRef, {
       assignments: initPlanning,
@@ -432,11 +539,14 @@ export async function resetAllDataToFirestore(): Promise<{
     });
 
     return {
-      agents: API_IMPORTED_AGENTS,
+      agents: seededAgents,
       shifts: currentShifts,
       planning: initPlanning
     };
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.WRITE, PLANNING_DOC);
+    }
     console.error('Failed to reset Firestore data:', err);
     return {
       agents: API_IMPORTED_AGENTS,
@@ -466,14 +576,21 @@ export async function saveAgentsToFirestore(agents: Agent[]): Promise<void> {
       currentBatch.forEach((agent, idx) => {
         const ref = doc(db, AGENTS_COLLECTION, agent.id);
         const resolvedOrder = typeof agent.order === 'number' ? agent.order : idx;
-        batch.set(ref, {
-          ...agent,
-          order: resolvedOrder
-        }, { merge: true });
+        batch.set(
+          ref,
+          stripUndefined({
+            ...agent,
+            order: resolvedOrder
+          }),
+          { merge: true }
+        );
       });
       await batch.commit();
     }
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.WRITE, AGENTS_COLLECTION);
+    }
     console.warn('Error saving agents to Firestore:', err);
   } finally {
     isSavingAgentsInFlight = false;
@@ -486,8 +603,15 @@ export async function saveAgentsToFirestore(agents: Agent[]): Promise<void> {
 export async function createAgentInFirestore(agent: Agent): Promise<void> {
   try {
     const ref = doc(db, AGENTS_COLLECTION, agent.id);
-    await setDoc(ref, agent);
+    const payload = stripUndefined({
+      ...agent,
+      ownerId: agent.ownerId || auth.currentUser?.uid || ''
+    });
+    await setDoc(ref, payload);
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.CREATE, `${AGENTS_COLLECTION}/${agent.id}`);
+    }
     console.error('Error creating agent in Firestore:', err);
     throw err;
   }
@@ -499,8 +623,11 @@ export async function createAgentInFirestore(agent: Agent): Promise<void> {
 export async function updateAgentInFirestore(id: string, updates: Partial<Agent>): Promise<void> {
   try {
     const ref = doc(db, AGENTS_COLLECTION, id);
-    await setDoc(ref, updates, { merge: true });
+    await setDoc(ref, stripUndefined(updates), { merge: true });
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.UPDATE, `${AGENTS_COLLECTION}/${id}`);
+    }
     console.error(`Error updating agent ${id} in Firestore:`, err);
     throw err;
   }
@@ -514,6 +641,9 @@ export async function deleteAgentFromFirestore(id: string): Promise<void> {
     const ref = doc(db, AGENTS_COLLECTION, id);
     await deleteDoc(ref);
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.DELETE, `${AGENTS_COLLECTION}/${id}`);
+    }
     console.error(`Error deleting agent ${id} from Firestore:`, err);
     throw err;
   }
@@ -538,15 +668,21 @@ export async function saveShiftsToFirestore(shifts: Shift[]): Promise<void> {
       const batch = writeBatch(db);
       currentBatch.forEach((shift, idx) => {
         const ref = doc(db, SHIFTS_COLLECTION, shift.id);
-        const { label, ...shiftData } = shift as any;
-        batch.set(ref, {
-          ...shiftData,
-          order: idx
-        }, { merge: true });
+        batch.set(
+          ref,
+          stripUndefined({
+            ...shift,
+            order: idx
+          }),
+          { merge: true }
+        );
       });
       await batch.commit();
     }
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.WRITE, SHIFTS_COLLECTION);
+    }
     console.warn('Error saving shifts to Firestore:', err);
   } finally {
     isSavingShiftsInFlight = false;
@@ -559,9 +695,15 @@ export async function saveShiftsToFirestore(shifts: Shift[]): Promise<void> {
 export async function createShiftInFirestore(shift: Shift): Promise<void> {
   try {
     const ref = doc(db, SHIFTS_COLLECTION, shift.id);
-    const { label, ...shiftData } = shift as any;
-    await setDoc(ref, shiftData);
+    const payload = stripUndefined({
+      ...shift,
+      ownerId: shift.ownerId || auth.currentUser?.uid || ''
+    });
+    await setDoc(ref, payload);
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.CREATE, `${SHIFTS_COLLECTION}/${shift.id}`);
+    }
     console.error('Error creating shift in Firestore:', err);
     throw err;
   }
@@ -573,9 +715,11 @@ export async function createShiftInFirestore(shift: Shift): Promise<void> {
 export async function updateShiftInFirestore(id: string, updates: Partial<Shift>): Promise<void> {
   try {
     const ref = doc(db, SHIFTS_COLLECTION, id);
-    const { label, ...shiftUpdates } = updates as any;
-    await setDoc(ref, shiftUpdates, { merge: true });
+    await setDoc(ref, stripUndefined(updates), { merge: true });
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.UPDATE, `${SHIFTS_COLLECTION}/${id}`);
+    }
     console.error(`Error updating shift ${id} in Firestore:`, err);
     throw err;
   }
@@ -589,12 +733,15 @@ export async function deleteShiftFromFirestore(id: string): Promise<void> {
     const ref = doc(db, SHIFTS_COLLECTION, id);
     await deleteDoc(ref);
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.DELETE, `${SHIFTS_COLLECTION}/${id}`);
+    }
     console.error(`Error deleting shift ${id} from Firestore:`, err);
     throw err;
   }
 }
 
-// Debounced and serialized Firestore planning persistence to prevent write-stream exhaustion
+// Debounced and serialized Firestore planning persistence
 let pendingPlanningAssignments: Record<string, string> | null = null;
 let isPlanningSaveInFlight = false;
 let planningDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -608,12 +755,11 @@ export async function flushPlanningSaveToFirestore(): Promise<void> {
     planningDebounceTimer = null;
   }
 
-  if (!pendingPlanningAssignments) {
+  if (!pendingPlanningAssignments || !auth.currentUser) {
     return;
   }
 
   if (isPlanningSaveInFlight) {
-    // A write is already active; the finally block of the in-flight write will flush this pending state
     return;
   }
 
@@ -623,19 +769,24 @@ export async function flushPlanningSaveToFirestore(): Promise<void> {
 
   try {
     const ref = doc(db, 'planning', 'current');
-    await setDoc(ref, {
-      assignments: assignmentsToSave,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
+    await setDoc(
+      ref,
+      {
+        assignments: assignmentsToSave,
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
   } catch (err: any) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.UPDATE, PLANNING_DOC);
+    }
     console.warn('Firestore planning sync throttled or transient error, scheduling retry:', err);
-    // If write stream failed, re-queue assignments to avoid losing changes
     if (!pendingPlanningAssignments) {
       pendingPlanningAssignments = assignmentsToSave;
     }
   } finally {
     isPlanningSaveInFlight = false;
-    // If new changes accumulated while the previous write was in flight, schedule next flush
     if (pendingPlanningAssignments) {
       if (planningDebounceTimer) clearTimeout(planningDebounceTimer);
       planningDebounceTimer = setTimeout(() => {
@@ -647,7 +798,6 @@ export async function flushPlanningSaveToFirestore(): Promise<void> {
 
 /**
  * Queue a planning save with debouncing (800ms) and serialized in-flight execution.
- * Avoids exhausting the Firestore WriteStream queue on rapid cell edits, dragging, or pasting.
  */
 export function queuePlanningSaveToFirestore(
   allAssignments: Record<string, string>,
@@ -669,18 +819,21 @@ export function queuePlanningSaveToFirestore(
   }
 }
 
-// Auto-flush pending writes when tab unloads / window closes
 if (typeof window !== 'undefined') {
   window.addEventListener('beforeunload', () => {
-    if (pendingPlanningAssignments && !isPlanningSaveInFlight) {
+    if (pendingPlanningAssignments && !isPlanningSaveInFlight && auth.currentUser) {
       const assignments = pendingPlanningAssignments;
       pendingPlanningAssignments = null;
       try {
         const ref = doc(db, 'planning', 'current');
-        setDoc(ref, {
-          assignments,
-          updatedAt: new Date().toISOString()
-        }, { merge: true }).catch(() => {});
+        setDoc(
+          ref,
+          {
+            assignments,
+            updatedAt: new Date().toISOString()
+          },
+          { merge: true }
+        ).catch(() => {});
       } catch {}
     }
   });
@@ -699,21 +852,24 @@ export async function savePlanningToFirestore(
  * Fetch all API tokens from Firestore
  */
 export async function getApiTokensFromFirestore(): Promise<ApiToken[]> {
+  if (!auth.currentUser) return [DEFAULT_MASTER_API_TOKEN];
   try {
     const tokensCol = collection(db, API_TOKENS_COLLECTION);
     const snap = await getDocs(tokensCol);
     if (snap.empty) {
-      // Initialize with default master token
-      const defToken = DEFAULT_MASTER_API_TOKEN;
-      await setDoc(doc(db, API_TOKENS_COLLECTION, defToken.id), defToken);
-      return [defToken];
+      const defToken = stripUndefined(DEFAULT_MASTER_API_TOKEN);
+      await setDoc(doc(db, API_TOKENS_COLLECTION, DEFAULT_MASTER_API_TOKEN.id), defToken);
+      return [DEFAULT_MASTER_API_TOKEN];
     }
     const tokens: ApiToken[] = [];
-    snap.forEach(d => {
+    snap.forEach((d) => {
       tokens.push({ id: d.id, ...d.data() } as ApiToken);
     });
     return tokens.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.LIST, API_TOKENS_COLLECTION);
+    }
     console.warn('Error fetching API tokens from Firestore:', err);
     return [DEFAULT_MASTER_API_TOKEN];
   }
@@ -728,9 +884,8 @@ export async function createApiTokenInFirestore(
   expiresAt?: string
 ): Promise<ApiToken> {
   try {
-    // Generate secure randomized token format: cortex_live_sec_<32 hex chars>
     const randomHex = Array.from(crypto.getRandomValues(new Uint8Array(16)))
-      .map(b => b.toString(16).padStart(2, '0'))
+      .map((b) => b.toString(16).padStart(2, '0'))
       .join('');
     const tokenSecret = `cortex_live_sec_${randomHex}`;
     const id = `token_${Date.now()}_${randomHex.substring(0, 6)}`;
@@ -743,14 +898,17 @@ export async function createApiTokenInFirestore(
       prefix,
       createdAt: new Date().toISOString(),
       createdBy,
-      expiresAt: expiresAt || undefined,
+      ...(expiresAt ? { expiresAt } : {}),
       isActive: true
     };
 
     const ref = doc(db, API_TOKENS_COLLECTION, id);
-    await setDoc(ref, newToken);
+    await setDoc(ref, stripUndefined(newToken));
     return newToken;
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.CREATE, API_TOKENS_COLLECTION);
+    }
     console.error('Error creating API token in Firestore:', err);
     throw err;
   }
@@ -764,6 +922,9 @@ export async function toggleApiTokenInFirestore(id: string, isActive: boolean): 
     const ref = doc(db, API_TOKENS_COLLECTION, id);
     await setDoc(ref, { isActive }, { merge: true });
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.UPDATE, `${API_TOKENS_COLLECTION}/${id}`);
+    }
     console.error(`Error updating API token ${id}:`, err);
     throw err;
   }
@@ -777,6 +938,9 @@ export async function deleteApiTokenFromFirestore(id: string): Promise<void> {
     const ref = doc(db, API_TOKENS_COLLECTION, id);
     await deleteDoc(ref);
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.DELETE, `${API_TOKENS_COLLECTION}/${id}`);
+    }
     console.error(`Error deleting API token ${id}:`, err);
     throw err;
   }
@@ -810,19 +974,21 @@ export const DEFAULT_ACCESS_CONTROL_SETTINGS: AccessControlSettings = {
 };
 
 /**
- * Fetch the Access Control and Auto-Approval settings from Firestore
+ * Fetch the Access Control and Auto-Approval settings from Firestore (read-only on fetch)
  */
 export async function getAccessControlSettings(): Promise<AccessControlSettings> {
+  if (!auth.currentUser) return DEFAULT_ACCESS_CONTROL_SETTINGS;
   try {
     const accessDocRef = doc(db, SETTINGS_COLLECTION, ACCESS_CONTROL_DOC);
     const snap = await getDoc(accessDocRef);
     if (snap.exists()) {
       return { ...DEFAULT_ACCESS_CONTROL_SETTINGS, ...snap.data() } as AccessControlSettings;
     }
-    // Seed default settings into Firestore
-    await setDoc(accessDocRef, DEFAULT_ACCESS_CONTROL_SETTINGS);
     return DEFAULT_ACCESS_CONTROL_SETTINGS;
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.GET, `${SETTINGS_COLLECTION}/${ACCESS_CONTROL_DOC}`);
+    }
     console.warn('Could not read access_control settings from Firestore, using defaults:', err);
     return DEFAULT_ACCESS_CONTROL_SETTINGS;
   }
@@ -836,8 +1002,13 @@ export async function saveAccessControlSettings(
 ): Promise<void> {
   try {
     const accessDocRef = doc(db, SETTINGS_COLLECTION, ACCESS_CONTROL_DOC);
-    await setDoc(accessDocRef, updates, { merge: true });
+    await setDoc(accessDocRef, stripUndefined({ ...DEFAULT_ACCESS_CONTROL_SETTINGS, ...updates }), {
+      merge: true
+    });
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.WRITE, `${SETTINGS_COLLECTION}/${ACCESS_CONTROL_DOC}`);
+    }
     console.error('Error updating access control settings in Firestore:', err);
     throw err;
   }
@@ -849,6 +1020,7 @@ export async function saveAccessControlSettings(
 export function subscribeToAccessControlSettings(
   onUpdate: (settings: AccessControlSettings) => void
 ): Unsubscribe {
+  if (!auth.currentUser) return () => {};
   const accessDocRef = doc(db, SETTINGS_COLLECTION, ACCESS_CONTROL_DOC);
   return onSnapshot(
     accessDocRef,
@@ -860,6 +1032,9 @@ export function subscribeToAccessControlSettings(
       }
     },
     (err) => {
+      if (isPermissionDeniedError(err)) {
+        handleFirestoreError(err, OperationType.GET, `${SETTINGS_COLLECTION}/${ACCESS_CONTROL_DOC}`);
+      }
       console.warn('Access control snapshot listener warning:', err);
       onUpdate(DEFAULT_ACCESS_CONTROL_SETTINGS);
     }
@@ -884,121 +1059,122 @@ export async function syncUserProfileAndCheckAccess(user: {
   try {
     existingUserSnap = await getDoc(userDocRef);
   } catch (e) {
+    if (isPermissionDeniedError(e)) {
+      handleFirestoreError(e, OperationType.GET, `${USERS_COLLECTION}/${user.uid}`);
+    }
     console.warn('User doc get error:', e);
   }
 
-  // Load access control settings
   const settings = await getAccessControlSettings();
-
-  // Determine if this user is a super admin
+  const isVerifiedEmail = Boolean(auth.currentUser?.emailVerified);
   const isSuperAdmin =
     user.uid === SUPER_ADMIN_UID ||
-    (user.uid && user.uid.startsWith('demo-manager')) ||
-    (userEmail && (settings.adminEmails || []).map(e => e.toLowerCase()).includes(userEmail)) ||
-    (userEmail && userEmail.includes('admin'));
+    (userEmail === 'ops.manager.gops@gmail.com' && isVerifiedEmail);
+
+  // If superadmin is logging in and access_control hasn't been persisted yet, seed it safely
+  if (isSuperAdmin) {
+    try {
+      const accessSnap = await getDoc(doc(db, SETTINGS_COLLECTION, ACCESS_CONTROL_DOC));
+      if (!accessSnap.exists()) {
+        await setDoc(doc(db, SETTINGS_COLLECTION, ACCESS_CONTROL_DOC), stripUndefined(DEFAULT_ACCESS_CONTROL_SETTINGS));
+      }
+    } catch {
+      // ignore non-critical seed error
+    }
+  }
 
   if (existingUserSnap && existingUserSnap.exists()) {
     const currentData = existingUserSnap.data() as AppUser;
-
-    // Super admin override if needed
-    const finalRole: UserRole = isSuperAdmin ? 'admin' : (currentData.role || 'viewer');
-    const finalStatus: UserStatus = isSuperAdmin ? 'approved' : (currentData.status || 'pending');
+    const finalRole: UserRole = isSuperAdmin ? 'admin' : currentData.role || 'viewer';
+    const finalStatus: UserStatus = isSuperAdmin ? 'approved' : currentData.status || 'pending';
 
     const updatedUser: AppUser = {
       ...currentData,
       uid: user.uid,
       email: userEmail || currentData.email,
       displayName: displayName || currentData.displayName,
-      photoURL: user.photoURL || currentData.photoURL,
+      ...(user.photoURL || currentData.photoURL ? { photoURL: user.photoURL || currentData.photoURL } : {}),
       role: finalRole,
       status: finalStatus,
       lastLoginAt: now
     };
 
-    // Update lastLoginAt non-blockingly
-    setDoc(userDocRef, {
+    // Only update allowed safe fields (never write role/status on non-admin login)
+    const loginPatch: Record<string, any> = {
       lastLoginAt: now,
-      displayName: updatedUser.displayName,
-      photoURL: updatedUser.photoURL,
-      role: finalRole,
-      status: finalStatus
-    }, { merge: true }).catch(() => {});
+      displayName: updatedUser.displayName
+    };
+    if (updatedUser.photoURL) {
+      loginPatch.photoURL = updatedUser.photoURL;
+    }
+    if (isSuperAdmin) {
+      loginPatch.role = finalRole;
+      loginPatch.status = finalStatus;
+    }
+
+    setDoc(userDocRef, loginPatch, { merge: true }).catch((err) => {
+      if (isPermissionDeniedError(err)) {
+        handleFirestoreError(err, OperationType.UPDATE, `${USERS_COLLECTION}/${user.uid}`);
+      }
+    });
 
     return updatedUser;
   }
 
   // New user registration & Auto-Approval Evaluation
-  let assignedRole: UserRole = settings.defaultRole || 'manager';
+  let assignedRole: UserRole = 'viewer';
   let assignedStatus: UserStatus = 'pending';
   let approvedAt: string | undefined = undefined;
   let approvedBy: string | undefined = undefined;
   let assignedAgentId: string | undefined = undefined;
   let assignedAgentName: string | undefined = undefined;
 
-  // 1. Check Super Admin
   if (isSuperAdmin) {
     assignedRole = 'admin';
     assignedStatus = 'approved';
     approvedAt = now;
     approvedBy = 'system_super_admin';
-  } 
-  // 2. Check Pre-approved / Whitelisted emails
-  else if (
-    userEmail &&
-    (settings.preApprovedEmails || []).some(
-      (item) => item.email.toLowerCase() === userEmail
-    )
-  ) {
-    const preApproved = (settings.preApprovedEmails || []).find(
-      (item) => item.email.toLowerCase() === userEmail
-    );
-    assignedRole = preApproved?.role || settings.defaultRole || 'manager';
-    assignedStatus = 'approved';
-    approvedAt = now;
-    approvedBy = `pre_approved_by_${preApproved?.addedBy || 'admin'}`;
-    assignedAgentId = preApproved?.agentId;
-    assignedAgentName = preApproved?.agentName;
-  }
-  // 3. Check Domain Whitelist
-  else if (
-    userEmail &&
-    (settings.allowedDomains || []).length > 0 &&
-    settings.allowedDomains.some((d) => {
-      const cleanDomain = d.trim().toLowerCase();
-      return userEmail.endsWith(cleanDomain.startsWith('@') ? cleanDomain : `@${cleanDomain}`);
-    })
-  ) {
-    assignedRole = settings.defaultRole || 'manager';
-    assignedStatus = 'approved';
-    approvedAt = now;
-    approvedBy = 'system_domain_whitelist';
-  }
-  // 4. Check Global Auto-Approval switch
-  else if (settings.autoApprovalEnabled) {
-    assignedRole = settings.defaultRole || 'manager';
+  } else if (settings.autoApprovalEnabled) {
+    // Only auto-assign non-admin default roles cleanly matching Firestore rules
+    const safeDefaultRole: UserRole =
+      settings.defaultRole === 'manager' || settings.defaultRole === 'viewer'
+        ? settings.defaultRole
+        : 'manager';
+    assignedRole = safeDefaultRole;
     assignedStatus = 'approved';
     approvedAt = now;
     approvedBy = 'system_auto_approval';
+
+    const preApproved = (settings.preApprovedEmails || []).find(
+      (item) => item.email.toLowerCase() === userEmail
+    );
+    if (preApproved) {
+      assignedAgentId = preApproved.agentId;
+      assignedAgentName = preApproved.agentName;
+    }
   }
 
   const newUser: AppUser = {
     uid: user.uid,
     email: userEmail,
     displayName,
-    photoURL: user.photoURL || undefined,
+    ...(user.photoURL ? { photoURL: user.photoURL } : {}),
     role: assignedRole,
     status: assignedStatus,
-    agentId: assignedAgentId,
-    agentName: assignedAgentName,
+    ...(assignedAgentId ? { agentId: assignedAgentId } : {}),
+    ...(assignedAgentName ? { agentName: assignedAgentName } : {}),
     createdAt: now,
     lastLoginAt: now,
-    approvedAt,
-    approvedBy
+    ...(approvedAt ? { approvedAt } : {}),
+    ...(approvedBy ? { approvedBy } : {})
   };
 
   try {
-    await setDoc(userDocRef, newUser);
+    await setDoc(userDocRef, stripUndefined(newUser));
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.CREATE, `${USERS_COLLECTION}/${user.uid}`);
+    }
     console.warn('Could not save new user document to Firestore:', err);
   }
 
@@ -1012,6 +1188,7 @@ export function subscribeToUserProfile(
   uid: string,
   onUpdate: (user: AppUser | null) => void
 ): Unsubscribe {
+  if (!auth.currentUser) return () => {};
   const userDocRef = doc(db, USERS_COLLECTION, uid);
   return onSnapshot(
     userDocRef,
@@ -1023,6 +1200,9 @@ export function subscribeToUserProfile(
       }
     },
     (err) => {
+      if (isPermissionDeniedError(err)) {
+        handleFirestoreError(err, OperationType.GET, `${USERS_COLLECTION}/${uid}`);
+      }
       console.warn('User profile snapshot error:', err);
     }
   );
@@ -1032,6 +1212,7 @@ export function subscribeToUserProfile(
  * Fetch all registered users from Firestore
  */
 export async function getAllUsersFromFirestore(): Promise<AppUser[]> {
+  if (!auth.currentUser) return [];
   try {
     const usersCol = collection(db, USERS_COLLECTION);
     const snap = await getDocs(usersCol);
@@ -1041,6 +1222,9 @@ export async function getAllUsersFromFirestore(): Promise<AppUser[]> {
     });
     return users.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.LIST, USERS_COLLECTION);
+    }
     console.warn('Could not fetch all users from Firestore:', err);
     return [];
   }
@@ -1049,9 +1233,8 @@ export async function getAllUsersFromFirestore(): Promise<AppUser[]> {
 /**
  * Real-time subscription to the entire users collection (for Admin Access Panel)
  */
-export function subscribeToAllUsers(
-  onUpdate: (users: AppUser[]) => void
-): Unsubscribe {
+export function subscribeToAllUsers(onUpdate: (users: AppUser[]) => void): Unsubscribe {
+  if (!auth.currentUser) return () => {};
   const usersCol = collection(db, USERS_COLLECTION);
   return onSnapshot(
     usersCol,
@@ -1064,13 +1247,16 @@ export function subscribeToAllUsers(
       onUpdate(users);
     },
     (err) => {
+      if (isPermissionDeniedError(err)) {
+        handleFirestoreError(err, OperationType.LIST, USERS_COLLECTION);
+      }
       console.warn('All users snapshot error:', err);
     }
   );
 }
 
 /**
- * Update user permissions / approval status in Firestore (Admin action)
+ * Update user permissions / approval status in Firestore
  */
 export async function updateUserAccessInFirestore(
   targetUid: string,
@@ -1086,13 +1272,16 @@ export async function updateUserAccessInFirestore(
 ): Promise<void> {
   try {
     const userDocRef = doc(db, USERS_COLLECTION, targetUid);
-    const payload: any = { ...updates };
+    const payload: any = { ...stripUndefined(updates) };
     if (updates.status === 'approved') {
       payload.approvedAt = new Date().toISOString();
       payload.approvedBy = adminIdentifier;
     }
     await setDoc(userDocRef, payload, { merge: true });
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.UPDATE, `${USERS_COLLECTION}/${targetUid}`);
+    }
     console.error(`Failed to update access for user ${targetUid}:`, err);
     throw err;
   }
@@ -1106,6 +1295,9 @@ export async function deleteUserFromFirestore(targetUid: string): Promise<void> 
     const userDocRef = doc(db, USERS_COLLECTION, targetUid);
     await deleteDoc(userDocRef);
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.DELETE, `${USERS_COLLECTION}/${targetUid}`);
+    }
     console.error(`Failed to delete user ${targetUid}:`, err);
     throw err;
   }
@@ -1127,14 +1319,14 @@ export async function addPreApprovedEmailInFirestore(
 
   const updatedList = [
     ...currentList.filter((item) => item.email.toLowerCase() !== cleanEmail),
-    {
+    stripUndefined({
       email: cleanEmail,
       role,
       agentId: agentId || undefined,
       agentName: agentName || undefined,
       addedAt: new Date().toISOString(),
       addedBy: adminEmail
-    }
+    }) as any
   ];
 
   await saveAccessControlSettings({ preApprovedEmails: updatedList });
@@ -1171,9 +1363,12 @@ export async function createSwapRequestInFirestore(
       createdAt: requestData.createdAt || new Date().toISOString(),
       updatedAt: new Date().toISOString()
     };
-    await setDoc(newDocRef, payload);
+    await setDoc(newDocRef, stripUndefined(payload));
     return newDocRef.id;
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.CREATE, SWAP_REQUESTS_COLLECTION);
+    }
     console.error('Failed to create shift swap request in Firestore:', err);
     throw err;
   }
@@ -1182,9 +1377,8 @@ export async function createSwapRequestInFirestore(
 /**
  * Subscribe in real-time to all shift swap requests
  */
-export function subscribeToSwapRequests(
-  onUpdate: (requests: ShiftSwapRequest[]) => void
-): Unsubscribe {
+export function subscribeToSwapRequests(onUpdate: (requests: ShiftSwapRequest[]) => void): Unsubscribe {
+  if (!auth.currentUser) return () => {};
   const swapCol = collection(db, SWAP_REQUESTS_COLLECTION);
   return onSnapshot(
     swapCol,
@@ -1195,23 +1389,25 @@ export function subscribeToSwapRequests(
         list.push({
           id: d.id,
           ...raw,
-          dates: Array.isArray(raw.dates) ? raw.dates : (raw.date ? [raw.date] : []),
+          dates: Array.isArray(raw.dates) ? raw.dates : raw.date ? [raw.date] : [],
           requesterShifts: raw.requesterShifts || {},
-          targetShifts: raw.targetShifts || {},
+          targetShifts: raw.targetShifts || {}
         } as ShiftSwapRequest);
       });
-      // Sort newest first
       list.sort((a, b) => new Date(b.createdAt || 0).getTime() - new Date(a.createdAt || 0).getTime());
       onUpdate(list);
     },
     (err) => {
+      if (isPermissionDeniedError(err)) {
+        handleFirestoreError(err, OperationType.LIST, SWAP_REQUESTS_COLLECTION);
+      }
       console.warn('Swap requests snapshot listener error:', err);
     }
   );
 }
 
 /**
- * Target Agent responds to swap request: Accept -> moves to pending_manager; Refuse -> rejected_by_target
+ * Target Agent responds to swap request: Accept -> pending_manager; Refuse -> rejected_by_target
  */
 export async function respondToSwapRequestAsTarget(
   requestId: string,
@@ -1229,8 +1425,11 @@ export async function respondToSwapRequestAsTarget(
       targetEmail: targetUser.email,
       updatedAt: now
     };
-    await setDoc(swapDocRef, updates, { merge: true });
+    await setDoc(swapDocRef, stripUndefined(updates), { merge: true });
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.UPDATE, `${SWAP_REQUESTS_COLLECTION}/${requestId}`);
+    }
     console.error(`Failed to respond to swap request ${requestId} as target:`, err);
     throw err;
   }
@@ -1238,7 +1437,6 @@ export async function respondToSwapRequestAsTarget(
 
 /**
  * Manager approves or rejects the swap request.
- * If approved: Automatically performs the shift swap in the Firestore planning document!
  */
 export async function respondToSwapRequestAsManager(
   requestId: string,
@@ -1257,19 +1455,21 @@ export async function respondToSwapRequestAsManager(
     const now = new Date().toISOString();
 
     if (!approved) {
-      // Manager rejected
-      await setDoc(swapDocRef, {
-        status: 'rejected_by_manager',
-        managerUid: managerUser.uid,
-        managerEmail: managerUser.email,
-        managerName: managerUser.displayName || managerUser.email,
-        managerDecisionAt: now,
-        updatedAt: now
-      }, { merge: true });
+      await setDoc(
+        swapDocRef,
+        {
+          status: 'rejected_by_manager',
+          managerUid: managerUser.uid,
+          managerEmail: managerUser.email,
+          managerName: managerUser.displayName || managerUser.email,
+          managerDecisionAt: now,
+          updatedAt: now
+        },
+        { merge: true }
+      );
       return {};
     }
 
-    // Manager approved -> Execute atomic shift swap on currentPlanning in Firestore
     const updatedPlanning = { ...currentPlanning };
     const requesterId = swapData.requesterAgentId;
     const targetId = swapData.targetAgentId;
@@ -1281,26 +1481,30 @@ export async function respondToSwapRequestAsManager(
       const requesterShift = currentPlanning[requesterKey] ?? swapData.requesterShifts[dateStr] ?? '';
       const targetShift = currentPlanning[targetKey] ?? swapData.targetShifts[dateStr] ?? '';
 
-      // Invert shifts
       updatedPlanning[requesterKey] = targetShift;
       updatedPlanning[targetKey] = requesterShift;
     });
 
-    // Save updated planning to Firestore
     await savePlanningToFirestore(updatedPlanning);
 
-    // Mark swap request approved
-    await setDoc(swapDocRef, {
-      status: 'approved',
-      managerUid: managerUser.uid,
-      managerEmail: managerUser.email,
-      managerName: managerUser.displayName || managerUser.email,
-      managerDecisionAt: now,
-      updatedAt: now
-    }, { merge: true });
+    await setDoc(
+      swapDocRef,
+      {
+        status: 'approved',
+        managerUid: managerUser.uid,
+        managerEmail: managerUser.email,
+        managerName: managerUser.displayName || managerUser.email,
+        managerDecisionAt: now,
+        updatedAt: now
+      },
+      { merge: true }
+    );
 
     return { updatedPlanning };
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.UPDATE, `${SWAP_REQUESTS_COLLECTION}/${requestId}`);
+    }
     console.error(`Failed to execute manager decision on swap ${requestId}:`, err);
     throw err;
   }
@@ -1312,11 +1516,18 @@ export async function respondToSwapRequestAsManager(
 export async function acknowledgeSwapNotification(requestId: string): Promise<void> {
   try {
     const swapDocRef = doc(db, SWAP_REQUESTS_COLLECTION, requestId);
-    await setDoc(swapDocRef, {
-      requesterNotified: true,
-      updatedAt: new Date().toISOString()
-    }, { merge: true });
+    await setDoc(
+      swapDocRef,
+      {
+        requesterNotified: true,
+        updatedAt: new Date().toISOString()
+      },
+      { merge: true }
+    );
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.UPDATE, `${SWAP_REQUESTS_COLLECTION}/${requestId}`);
+    }
     console.warn(`Failed to acknowledge swap notification ${requestId}:`, err);
   }
 }
@@ -1329,10 +1540,10 @@ export async function deleteSwapRequestInFirestore(requestId: string): Promise<v
     const swapDocRef = doc(db, SWAP_REQUESTS_COLLECTION, requestId);
     await deleteDoc(swapDocRef);
   } catch (err) {
+    if (isPermissionDeniedError(err)) {
+      handleFirestoreError(err, OperationType.DELETE, `${SWAP_REQUESTS_COLLECTION}/${requestId}`);
+    }
     console.error(`Failed to delete swap request ${requestId}:`, err);
     throw err;
   }
 }
-
-
-

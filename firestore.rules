@@ -2,7 +2,22 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // Helper functions for Attribute-Based Access Control (ABAC)
+    // ===============================================================
+    // 1. GLOBAL HELPER FUNCTIONS (Zero-Trust Primitives)
+    // ===============================================================
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
     function isSignedIn() {
       return request.auth != null;
     }
@@ -11,81 +26,432 @@ service cloud.firestore {
       return isSignedIn() && request.auth.uid == userId;
     }
 
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
     function isSuperAdmin() {
       return isSignedIn() && (
         request.auth.uid == 'nJxGjmZvHxZNnaIV5BXiRjiq0Cv2' ||
-        request.auth.token.email == 'ops.manager.gops@gmail.com'
+        (request.auth.token.email == 'ops.manager.gops@gmail.com' && isEmailVerified())
       );
     }
 
+    function userDocExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function userDoc() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
     function isApprovedUser() {
-      return isSuperAdmin() || (
-        isSignedIn() && 
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'approved'
-      );
+      return isSuperAdmin() || (userDocExists() && userDoc().status == 'approved');
     }
 
     function isAdmin() {
       return isSuperAdmin() || (
-        isApprovedUser() &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
+        userDocExists() &&
+        userDoc().status == 'approved' &&
+        userDoc().role == 'admin'
       );
     }
 
-    function isManager() {
+    function isManagerOrAdmin() {
       return isSuperAdmin() || (
-        isApprovedUser() && (
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'manager' ||
-          get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin'
-        )
+        userDocExists() &&
+        userDoc().status == 'approved' &&
+        userDoc().role in ['admin', 'manager']
       );
     }
 
-    // 1. Users collection
+    function isOptionalString(data, field, maxLen) {
+      return !(field in data) || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isOptionalNullableString(data, field, maxLen) {
+      return !(field in data) || data[field] == null || (data[field] is string && data[field].size() <= maxLen);
+    }
+
+    function isOptionalBool(data, field) {
+      return !(field in data) || data[field] is bool;
+    }
+
+    // ===============================================================
+    // 2. ENTITY VALIDATION BLUEPRINTS (Anti-Update-Gap)
+    // ===============================================================
+
+    function isValidUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'displayName', 'role', 'status', 'createdAt', 'lastLoginAt']) &&
+        data.keys().hasOnly([
+          'uid', 'email', 'displayName', 'photoURL', 'role', 'status',
+          'agentId', 'agentName', 'createdAt', 'lastLoginAt',
+          'approvedAt', 'approvedBy', 'requestReason', 'notes'
+        ]) &&
+        isValidId(data.uid) &&
+        data.email is string && data.email.size() <= 200 &&
+        data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120 &&
+        data.role in ['admin', 'manager', 'viewer'] &&
+        data.status in ['approved', 'pending', 'rejected', 'disabled'] &&
+        data.createdAt is string && data.createdAt.size() >= 10 && data.createdAt.size() <= 64 &&
+        data.lastLoginAt is string && data.lastLoginAt.size() >= 10 && data.lastLoginAt.size() <= 64 &&
+        isOptionalString(data, 'photoURL', 500) &&
+        isOptionalNullableString(data, 'agentId', 128) &&
+        isOptionalNullableString(data, 'agentName', 120) &&
+        isOptionalString(data, 'approvedAt', 64) &&
+        isOptionalString(data, 'approvedBy', 120) &&
+        isOptionalString(data, 'requestReason', 500) &&
+        isOptionalString(data, 'notes', 500);
+    }
+
+    function isValidAccessSettings(data) {
+      return data.keys().hasAll(['autoApprovalEnabled', 'defaultRole']) &&
+        data.keys().hasOnly([
+          'autoApprovalEnabled', 'defaultRole', 'allowedDomains',
+          'adminEmails', 'superAdminUid', 'preApprovedEmails', 'allowManagersProgramme'
+        ]) &&
+        data.autoApprovalEnabled is bool &&
+        data.defaultRole in ['admin', 'manager', 'viewer'] &&
+        (!('allowedDomains' in data) || (data.allowedDomains is list && data.allowedDomains.size() <= 50 && (data.allowedDomains.size() == 0 || data.allowedDomains[0] is string))) &&
+        (!('adminEmails' in data) || (data.adminEmails is list && data.adminEmails.size() <= 20 && (data.adminEmails.size() == 0 || data.adminEmails[0] is string))) &&
+        isOptionalString(data, 'superAdminUid', 128) &&
+        (!('preApprovedEmails' in data) || (data.preApprovedEmails is list && data.preApprovedEmails.size() <= 200 && (data.preApprovedEmails.size() == 0 || data.preApprovedEmails[0] is map))) &&
+        isOptionalBool(data, 'allowManagersProgramme');
+    }
+
+    function isValidAgent(data) {
+      return data.keys().hasAll(['id', 'name', 'team', 'order']) &&
+        data.keys().hasOnly(['id', 'name', 'station', 'team', 'defaultMissionId', 'order', 'ownerId']) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.team is string && data.team.size() >= 1 && data.team.size() <= 80 &&
+        data.order is number && data.order >= 0 && data.order <= 10000 &&
+        isOptionalString(data, 'station', 40) &&
+        isOptionalString(data, 'defaultMissionId', 128) &&
+        isOptionalString(data, 'ownerId', 128);
+    }
+
+    function isValidShift(data) {
+      return data.keys().hasAll(['id', 'code', 'hours', 'order']) &&
+        data.keys().hasOnly([
+          'id', 'code', 'label', 'hours', 'defaultMissionId', 'defaultPause',
+          'order', 'ownerId', 'color', 'season', 'hidden'
+        ]) &&
+        isValidId(data.id) &&
+        data.code is string && data.code.size() >= 1 && data.code.size() <= 32 &&
+        data.hours is string && data.hours.size() >= 1 && data.hours.size() <= 64 &&
+        data.order is number && data.order >= 0 && data.order <= 10000 &&
+        isOptionalString(data, 'label', 120) &&
+        isOptionalString(data, 'defaultMissionId', 128) &&
+        isOptionalString(data, 'defaultPause', 32) &&
+        isOptionalString(data, 'ownerId', 128) &&
+        isOptionalString(data, 'color', 32) &&
+        (!('season' in data) || data.season in ['all', 'winter', 'summer']) &&
+        isOptionalBool(data, 'hidden');
+    }
+
+    function isValidPlanning(data) {
+      return data.keys().hasAll(['assignments', 'updatedAt']) &&
+        data.keys().hasOnly(['assignments', 'updatedAt']) &&
+        data.assignments is map &&
+        data.assignments.size() <= 20000 &&
+        data.updatedAt is string && data.updatedAt.size() >= 10 && data.updatedAt.size() <= 64;
+    }
+
+    function isValidApiToken(data) {
+      return data.keys().hasAll(['id', 'name', 'token', 'prefix', 'createdAt', 'isActive']) &&
+        data.keys().hasOnly([
+          'id', 'name', 'token', 'prefix', 'createdAt',
+          'lastUsedAt', 'createdBy', 'expiresAt', 'isActive'
+        ]) &&
+        isValidId(data.id) &&
+        data.name is string && data.name.size() >= 1 && data.name.size() <= 120 &&
+        data.token is string && data.token.size() >= 10 && data.token.size() <= 128 &&
+        data.prefix is string && data.prefix.size() >= 4 && data.prefix.size() <= 40 &&
+        data.createdAt is string && data.createdAt.size() >= 10 && data.createdAt.size() <= 64 &&
+        data.isActive is bool &&
+        isOptionalString(data, 'lastUsedAt', 64) &&
+        isOptionalString(data, 'createdBy', 120) &&
+        isOptionalString(data, 'expiresAt', 64);
+    }
+
+    function isValidSwapRequest(data) {
+      return data.keys().hasAll([
+          'id', 'requesterUid', 'requesterAgentId', 'targetAgentId',
+          'dates', 'requesterShifts', 'targetShifts', 'status', 'createdAt', 'updatedAt'
+        ]) &&
+        data.keys().hasOnly([
+          'id', 'requesterUid', 'requesterEmail', 'requesterName',
+          'requesterAgentId', 'requesterAgentName', 'targetAgentId', 'targetAgentName',
+          'targetUid', 'targetEmail', 'dates', 'requesterShifts', 'targetShifts',
+          'status', 'targetDecisionAt', 'targetDecisionBy',
+          'managerUid', 'managerEmail', 'managerName', 'managerDecisionAt',
+          'createdAt', 'updatedAt', 'requesterNotified'
+        ]) &&
+        isValidId(data.id) &&
+        isValidId(data.requesterUid) &&
+        isValidId(data.requesterAgentId) &&
+        isValidId(data.targetAgentId) &&
+        data.dates is list && data.dates.size() >= 1 && data.dates.size() <= 31 &&
+        data.dates[0] is string && data.dates[0].size() <= 20 &&
+        data.requesterShifts is map && data.requesterShifts.size() <= 31 &&
+        data.targetShifts is map && data.targetShifts.size() <= 31 &&
+        data.status in ['pending_target', 'rejected_by_target', 'pending_manager', 'rejected_by_manager', 'approved'] &&
+        data.createdAt is string && data.createdAt.size() >= 10 && data.createdAt.size() <= 64 &&
+        data.updatedAt is string && data.updatedAt.size() >= 10 && data.updatedAt.size() <= 64 &&
+        isOptionalString(data, 'requesterEmail', 200) &&
+        isOptionalString(data, 'requesterName', 120) &&
+        isOptionalString(data, 'requesterAgentName', 120) &&
+        isOptionalString(data, 'targetAgentName', 120) &&
+        isOptionalString(data, 'targetUid', 128) &&
+        isOptionalString(data, 'targetEmail', 200) &&
+        isOptionalString(data, 'targetDecisionAt', 64) &&
+        isOptionalString(data, 'targetDecisionBy', 120) &&
+        isOptionalString(data, 'managerUid', 128) &&
+        isOptionalString(data, 'managerEmail', 200) &&
+        isOptionalString(data, 'managerName', 120) &&
+        isOptionalString(data, 'managerDecisionAt', 64) &&
+        isOptionalBool(data, 'requesterNotified');
+    }
+
+    // ===============================================================
+    // 3. GLOBAL SAFETY NET (Deny-by-Default)
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
+    // 4. COLLECTION RULES
+    // ===============================================================
+
+    // Users: Strict PII Isolation & Anti-Self-Escalation
     match /users/{userId} {
-      allow read: if isSignedIn();
-      allow create: if isSignedIn() && isOwner(userId);
-      allow update: if isSuperAdmin() || isAdmin() || (isSignedIn() && isOwner(userId));
-      allow delete: if isSuperAdmin() || isAdmin();
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+
+      allow create: if isValidId(userId) &&
+        isOwner(userId) &&
+        isValidUser(incoming()) &&
+        incoming().uid == userId &&
+        (
+          isSuperAdmin() ||
+          (
+            incoming().role == 'viewer' &&
+            incoming().status == 'pending'
+          ) ||
+          (
+            exists(/databases/$(database)/documents/settings/access_control) &&
+            get(/databases/$(database)/documents/settings/access_control).data.autoApprovalEnabled == true &&
+            incoming().status == 'approved' &&
+            incoming().role in ['manager', 'viewer'] &&
+            incoming().role == get(/databases/$(database)/documents/settings/access_control).data.defaultRole
+          )
+        );
+
+      allow update: if isValidId(userId) &&
+        isSignedIn() &&
+        isValidUser(incoming()) &&
+        incoming().uid == existing().uid &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          (
+            isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'role', 'status', 'approvedAt', 'approvedBy', 'notes',
+              'requestReason', 'agentId', 'agentName', 'lastLoginAt',
+              'displayName', 'photoURL', 'email'
+            ])
+          ) ||
+          (
+            isOwner(userId) &&
+            (
+              incoming().diff(existing()).affectedKeys().hasOnly(['lastLoginAt', 'displayName', 'photoURL']) ||
+              incoming().diff(existing()).affectedKeys().hasOnly(['requestReason']) ||
+              (
+                (!('agentId' in existing()) || existing().agentId == null) &&
+                incoming().diff(existing()).affectedKeys().hasOnly(['agentId', 'agentName'])
+              )
+            )
+          )
+        );
+
+      allow delete: if isValidId(userId) && isAdmin();
     }
 
-    // 2. Settings collection (Access Control & Auto-approval)
+    // Access Control Settings
     match /settings/{docId} {
-      allow read: if true;
-      allow write: if isSuperAdmin() || isAdmin() || isSignedIn();
+      allow get: if isValidId(docId) && docId == 'access_control' && isSignedIn();
+      allow list: if isAdmin();
+
+      allow create: if isValidId(docId) &&
+        docId == 'access_control' &&
+        isAdmin() &&
+        isValidAccessSettings(incoming());
+
+      allow update: if isValidId(docId) &&
+        docId == 'access_control' &&
+        isAdmin() &&
+        isValidAccessSettings(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'autoApprovalEnabled', 'defaultRole', 'allowedDomains',
+          'adminEmails', 'superAdminUid', 'preApprovedEmails', 'allowManagersProgramme'
+        ]);
+
+      allow delete: if isValidId(docId) && docId == 'access_control' && isSuperAdmin();
     }
 
-    // 3. Agents collection
+    // Agents Catalog
     match /agents/{agentId} {
-      allow read: if true;
-      allow write: if true;
+      allow get: if isValidId(agentId) && isApprovedUser();
+      allow list: if isApprovedUser();
+
+      allow create: if isValidId(agentId) &&
+        isManagerOrAdmin() &&
+        isValidAgent(incoming()) &&
+        incoming().id == agentId &&
+        (!('ownerId' in incoming()) || incoming().ownerId == '' || incoming().ownerId == request.auth.uid || isAdmin());
+
+      allow update: if isValidId(agentId) &&
+        isManagerOrAdmin() &&
+        isValidAgent(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'name', 'station', 'team', 'defaultMissionId', 'order', 'ownerId'
+        ]);
+
+      allow delete: if isValidId(agentId) && isManagerOrAdmin();
     }
 
-    // 4. Shifts collection
+    // Shifts Catalog
     match /shifts/{shiftId} {
-      allow read: if true;
-      allow write: if true;
+      allow get: if isValidId(shiftId) && isApprovedUser();
+      allow list: if isApprovedUser();
+
+      allow create: if isValidId(shiftId) &&
+        isManagerOrAdmin() &&
+        isValidShift(incoming()) &&
+        incoming().id == shiftId &&
+        (!('ownerId' in incoming()) || incoming().ownerId == '' || incoming().ownerId == request.auth.uid || isAdmin());
+
+      allow update: if isValidId(shiftId) &&
+        isManagerOrAdmin() &&
+        isValidShift(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'code', 'label', 'hours', 'defaultMissionId', 'defaultPause',
+          'order', 'ownerId', 'color', 'season', 'hidden'
+        ]);
+
+      allow delete: if isValidId(shiftId) && isManagerOrAdmin();
     }
 
-    // 5. Planning collection
+    // Planning Schedule Grid
     match /planning/{docId} {
-      allow read: if true;
-      allow write: if true;
+      allow get: if isValidId(docId) && isApprovedUser();
+      allow list: if isApprovedUser();
+
+      allow create: if isValidId(docId) &&
+        docId == 'current' &&
+        isManagerOrAdmin() &&
+        isValidPlanning(incoming());
+
+      allow update: if isValidId(docId) &&
+        docId == 'current' &&
+        isManagerOrAdmin() &&
+        isValidPlanning(incoming()) &&
+        incoming().diff(existing()).affectedKeys().hasOnly(['assignments', 'updatedAt']);
+
+      allow delete: if isValidId(docId) && isAdmin();
     }
 
-    // 6. Shift Swap Requests collection
+    // Shift Swap Requests State Machine
     match /swap_requests/{requestId} {
-      allow read: if true;
-      allow create: if isSignedIn();
-      allow update: if isSignedIn();
-      allow delete: if isSuperAdmin() || isAdmin() || isManager();
+      allow get: if isValidId(requestId) && isApprovedUser();
+      allow list: if isApprovedUser();
+
+      allow create: if isValidId(requestId) &&
+        isApprovedUser() &&
+        isValidSwapRequest(incoming()) &&
+        incoming().id == requestId &&
+        incoming().requesterUid == request.auth.uid &&
+        incoming().status == 'pending_target';
+
+      allow update: if isValidId(requestId) &&
+        isApprovedUser() &&
+        isValidSwapRequest(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().requesterUid == existing().requesterUid &&
+        incoming().createdAt == existing().createdAt &&
+        (
+          (
+            isAdmin() &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'targetDecisionAt', 'targetDecisionBy', 'targetUid', 'targetEmail',
+              'managerUid', 'managerEmail', 'managerName', 'managerDecisionAt',
+              'updatedAt', 'requesterNotified'
+            ])
+          ) ||
+          (
+            existing().status == 'pending_target' &&
+            incoming().status in ['pending_manager', 'rejected_by_target'] &&
+            incoming().targetUid == request.auth.uid &&
+            request.auth.uid != existing().requesterUid &&
+            (!('targetUid' in existing()) || existing().targetUid == null || existing().targetUid == request.auth.uid) &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'targetDecisionAt', 'targetDecisionBy', 'targetUid', 'targetEmail', 'updatedAt'
+            ])
+          ) ||
+          (
+            isManagerOrAdmin() &&
+            existing().status == 'pending_manager' &&
+            incoming().status in ['approved', 'rejected_by_manager'] &&
+            incoming().managerUid == request.auth.uid &&
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'status', 'managerUid', 'managerEmail', 'managerName', 'managerDecisionAt', 'updatedAt'
+            ])
+          ) ||
+          (
+            (existing().requesterUid == request.auth.uid || isManagerOrAdmin()) &&
+            existing().status in ['approved', 'rejected_by_target', 'rejected_by_manager'] &&
+            incoming().status == existing().status &&
+            incoming().requesterNotified == true &&
+            incoming().diff(existing()).affectedKeys().hasOnly(['requesterNotified', 'updatedAt'])
+          )
+        );
+
+      allow delete: if isValidId(requestId) && (
+        isManagerOrAdmin() ||
+        (isApprovedUser() && existing().requesterUid == request.auth.uid && existing().status == 'pending_target')
+      );
     }
 
-    // 7. API Tokens collection
+    // API Tokens (Restricted strictly to Managers and Admins - never exposed to Viewers)
     match /api_tokens/{tokenId} {
-      allow read, write: if isSuperAdmin() || isAdmin() || isSignedIn();
+      allow get: if isValidId(tokenId) && isManagerOrAdmin();
+      allow list: if isManagerOrAdmin();
+
+      allow create: if isValidId(tokenId) &&
+        isManagerOrAdmin() &&
+        isValidApiToken(incoming()) &&
+        incoming().id == tokenId;
+
+      allow update: if isValidId(tokenId) &&
+        isManagerOrAdmin() &&
+        isValidApiToken(incoming()) &&
+        incoming().id == existing().id &&
+        incoming().token == existing().token &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().diff(existing()).affectedKeys().hasOnly([
+          'isActive', 'name', 'lastUsedAt', 'expiresAt'
+        ]);
+
+      allow delete: if isValidId(tokenId) && isManagerOrAdmin() && (isAdmin() || tokenId != 'token_default_master');
+    }
+
+    // Connection Probe Document
+    match /test/{docId} {
+      allow get: if isValidId(docId) && docId == 'connection' && isSignedIn();
     }
   }
 }
-

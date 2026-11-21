@@ -5,30 +5,31 @@
       "description": "Operational dispatch agent",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "station": { "type": "string" },
-        "team": { "type": "string" },
-        "defaultMissionId": { "type": "string" },
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "station": { "type": "string", "maxLength": 40 },
+        "team": { "type": "string", "minLength": 1, "maxLength": 80 },
+        "defaultMissionId": { "type": "string", "maxLength": 128 },
         "order": { "type": "number" },
-        "ownerId": { "type": "string" }
+        "ownerId": { "type": "string", "maxLength": 128 }
       },
-      "required": ["id", "name", "station", "team", "order"]
+      "required": ["id", "name", "team", "order"]
     },
     "Shift": {
       "title": "Shift",
       "description": "Predefined shift code and hours",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "code": { "type": "string" },
-        "hours": { "type": "string" },
-        "defaultMissionId": { "type": "string" },
-        "defaultPause": { "type": "string" },
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "code": { "type": "string", "minLength": 1, "maxLength": 32 },
+        "label": { "type": "string", "maxLength": 120 },
+        "hours": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "defaultMissionId": { "type": "string", "maxLength": 128 },
+        "defaultPause": { "type": "string", "maxLength": 32 },
         "order": { "type": "number" },
-        "ownerId": { "type": "string" },
-        "color": { "type": "string" },
-        "season": { "type": "string" },
+        "ownerId": { "type": "string", "maxLength": 128 },
+        "color": { "type": "string", "maxLength": 32 },
+        "season": { "type": "string", "enum": ["all", "winter", "summer"] },
         "hidden": { "type": "boolean" }
       },
       "required": ["id", "code", "hours", "order"]
@@ -39,22 +40,23 @@
       "type": "object",
       "properties": {
         "assignments": { "type": "object" },
-        "updatedAt": { "type": "string" }
-      }
+        "updatedAt": { "type": "string", "maxLength": 64 }
+      },
+      "required": ["assignments", "updatedAt"]
     },
     "ApiToken": {
       "title": "API Token",
       "description": "Authentication token for REST API endpoints",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "name": { "type": "string" },
-        "token": { "type": "string" },
-        "prefix": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "lastUsedAt": { "type": "string" },
-        "createdBy": { "type": "string" },
-        "expiresAt": { "type": "string" },
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "name": { "type": "string", "minLength": 1, "maxLength": 120 },
+        "token": { "type": "string", "minLength": 10, "maxLength": 128 },
+        "prefix": { "type": "string", "minLength": 4, "maxLength": 40 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "lastUsedAt": { "type": "string", "maxLength": 64 },
+        "createdBy": { "type": "string", "maxLength": 120 },
+        "expiresAt": { "type": "string", "maxLength": 64 },
         "isActive": { "type": "boolean" }
       },
       "required": ["id", "name", "token", "prefix", "createdAt", "isActive"]
@@ -64,17 +66,22 @@
       "description": "Registered users with role and approval status",
       "type": "object",
       "properties": {
-        "uid": { "type": "string" },
-        "email": { "type": "string" },
-        "displayName": { "type": "string" },
+        "uid": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "email": { "type": "string", "maxLength": 200 },
+        "displayName": { "type": "string", "maxLength": 120 },
+        "photoURL": { "type": "string", "maxLength": 500 },
         "role": { "type": "string", "enum": ["admin", "manager", "viewer"] },
         "status": { "type": "string", "enum": ["approved", "pending", "rejected", "disabled"] },
-        "createdAt": { "type": "string" },
-        "lastLoginAt": { "type": "string" },
-        "approvedAt": { "type": "string" },
-        "approvedBy": { "type": "string" }
+        "agentId": { "type": ["string", "null"], "maxLength": 128 },
+        "agentName": { "type": ["string", "null"], "maxLength": 120 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "lastLoginAt": { "type": "string", "maxLength": 64 },
+        "approvedAt": { "type": "string", "maxLength": 64 },
+        "approvedBy": { "type": "string", "maxLength": 120 },
+        "requestReason": { "type": "string", "maxLength": 500 },
+        "notes": { "type": "string", "maxLength": 500 }
       },
-      "required": ["uid", "email", "role", "status"]
+      "required": ["uid", "email", "displayName", "role", "status", "createdAt", "lastLoginAt"]
     },
     "AccessSettings": {
       "title": "Access Control Settings",
@@ -82,61 +89,74 @@
       "type": "object",
       "properties": {
         "autoApprovalEnabled": { "type": "boolean" },
-        "defaultRole": { "type": "string" },
+        "defaultRole": { "type": "string", "enum": ["admin", "manager", "viewer"] },
         "allowedDomains": { "type": "array" },
-        "adminEmails": { "type": "array" }
-      }
+        "adminEmails": { "type": "array" },
+        "superAdminUid": { "type": "string", "maxLength": 128 },
+        "preApprovedEmails": { "type": "array" },
+        "allowManagersProgramme": { "type": "boolean" }
+      },
+      "required": ["autoApprovalEnabled", "defaultRole"]
     },
     "SwapRequest": {
       "title": "Shift Swap Request",
       "description": "Requests from agents to swap scheduled shifts",
       "type": "object",
       "properties": {
-        "id": { "type": "string" },
-        "requesterUid": { "type": "string" },
-        "requesterEmail": { "type": "string" },
-        "requesterName": { "type": "string" },
-        "requesterAgentId": { "type": "string" },
-        "requesterAgentName": { "type": "string" },
-        "targetAgentId": { "type": "string" },
-        "targetAgentName": { "type": "string" },
+        "id": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^[a-zA-Z0-9_\\-]+$" },
+        "requesterUid": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "requesterEmail": { "type": "string", "maxLength": 200 },
+        "requesterName": { "type": "string", "maxLength": 120 },
+        "requesterAgentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "requesterAgentName": { "type": "string", "maxLength": 120 },
+        "targetAgentId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "targetAgentName": { "type": "string", "maxLength": 120 },
+        "targetUid": { "type": "string", "maxLength": 128 },
+        "targetEmail": { "type": "string", "maxLength": 200 },
         "dates": { "type": "array" },
         "requesterShifts": { "type": "object" },
         "targetShifts": { "type": "object" },
-        "status": { "type": "string" },
-        "createdAt": { "type": "string" },
-        "updatedAt": { "type": "string" }
+        "status": { "type": "string", "enum": ["pending_target", "rejected_by_target", "pending_manager", "rejected_by_manager", "approved"] },
+        "targetDecisionAt": { "type": "string", "maxLength": 64 },
+        "targetDecisionBy": { "type": "string", "maxLength": 120 },
+        "managerUid": { "type": "string", "maxLength": 128 },
+        "managerEmail": { "type": "string", "maxLength": 200 },
+        "managerName": { "type": "string", "maxLength": 120 },
+        "managerDecisionAt": { "type": "string", "maxLength": 64 },
+        "createdAt": { "type": "string", "maxLength": 64 },
+        "updatedAt": { "type": "string", "maxLength": 64 },
+        "requesterNotified": { "type": "boolean" }
       },
-      "required": ["id", "requesterUid", "requesterAgentId", "targetAgentId", "dates", "status"]
+      "required": ["id", "requesterUid", "requesterAgentId", "targetAgentId", "dates", "requesterShifts", "targetShifts", "status", "createdAt", "updatedAt"]
     }
   },
   "firestore": {
-    "users": {
-      "entity": "User",
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/User" },
       "description": "User profiles and RBAC permissions"
     },
-    "settings": {
-      "entity": "AccessSettings",
+    "/settings/{docId}": {
+      "schema": { "$ref": "#/entities/AccessSettings" },
       "description": "Application settings and auto-approval rules"
     },
-    "agents": {
-      "entity": "Agent",
-      "description": "List of agents"
+    "/agents/{agentId}": {
+      "schema": { "$ref": "#/entities/Agent" },
+      "description": "List of operational agents"
     },
-    "shifts": {
-      "entity": "Shift",
+    "/shifts/{shiftId}": {
+      "schema": { "$ref": "#/entities/Shift" },
       "description": "List of shift configurations"
     },
-    "planning": {
-      "entity": "PlanningDoc",
+    "/planning/{docId}": {
+      "schema": { "$ref": "#/entities/PlanningDoc" },
       "description": "Planning state persistence"
     },
-    "swap_requests": {
-      "entity": "SwapRequest",
+    "/swap_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/SwapRequest" },
       "description": "Shift swap requests and lifecycle states"
     },
-    "api_tokens": {
-      "entity": "ApiToken",
+    "/api_tokens/{tokenId}": {
+      "schema": { "$ref": "#/entities/ApiToken" },
       "description": "Collection of authorized API tokens"
     }
   }

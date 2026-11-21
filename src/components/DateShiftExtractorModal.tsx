@@ -23,7 +23,11 @@ import { Agent, Shift, ApiToken } from '../types';
 import { formatToDateStr, formatFullFrenchDate, parseDateStr } from '../utils/dateUtils';
 import { API_IMPORTED_SHIFTS } from '../data/mockData';
 import { ApiTokenManager } from './ApiTokenManager';
-import { getApiTokensFromFirestore, DEFAULT_MASTER_API_TOKEN } from '../firebase';
+import {
+  getApiTokensFromFirestore,
+  DEFAULT_MASTER_API_TOKEN,
+  getCurrentUserIdToken
+} from '../firebase';
 
 interface DateShiftExtractorModalProps {
   isOpen: boolean;
@@ -62,10 +66,25 @@ export const DateShiftExtractorModal: React.FC<DateShiftExtractorModalProps> = (
       setTargetDateStr(formatToDateStr(initialDate));
       setLiveApiResponse(null);
       setLiveApiStatus(null);
-      getApiTokensFromFirestore().then(tokens => {
+      getApiTokensFromFirestore().then(async (tokens) => {
         if (tokens && tokens.length > 0) {
           setApiTokens(tokens);
           setSelectedToken(tokens.find(t => t.isActive) || tokens[0]);
+          try {
+            const idToken = await getCurrentUserIdToken();
+            if (idToken) {
+              await fetch('/api/tokens/sync', {
+                method: 'POST',
+                headers: {
+                  'Content-Type': 'application/json',
+                  Authorization: `Bearer ${idToken}`
+                },
+                body: JSON.stringify({ tokens })
+              });
+            }
+          } catch {
+            // Ignore transient sync error
+          }
         }
       }).catch(() => {});
     }

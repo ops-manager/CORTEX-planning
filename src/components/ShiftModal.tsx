@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Shift, ShiftSeason } from '../types';
+import { auth } from '../firebase';
 import { 
   getShiftStyle, 
   calculateShiftDurationHours, 
@@ -135,7 +136,7 @@ export const ShiftModal: React.FC<ShiftModalProps> = ({
         hidden,
         defaultPause: defaultPause.trim(),
         defaultMissionId: defaultMissionId.trim(),
-        ownerId: initialShift?.ownerId || 'nJxGjmZvHxZNnaIV5BXiRjiq0Cv2'
+        ownerId: initialShift?.ownerId || auth.currentUser?.uid || ''
       };
 
       await onSave(shiftData);

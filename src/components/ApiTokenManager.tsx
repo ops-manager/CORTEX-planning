@@ -21,7 +21,7 @@ import {
   createApiTokenInFirestore, 
   toggleApiTokenInFirestore, 
   deleteApiTokenFromFirestore,
-  DEFAULT_MASTER_API_TOKEN
+  getCurrentUserIdToken
 } from '../firebase';
 
 interface ApiTokenManagerProps {
@@ -42,12 +42,30 @@ export const ApiTokenManager: React.FC<ApiTokenManagerProps> = ({
   const [copiedTokenId, setCopiedTokenId] = useState<string | null>(null);
   const [visibleTokenIds, setVisibleTokenIds] = useState<Set<string>>(new Set());
 
+  const syncTokensToServer = async (tokenList: ApiToken[]) => {
+    try {
+      const idToken = await getCurrentUserIdToken();
+      if (!idToken) return;
+      await fetch('/api/tokens/sync', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${idToken}`
+        },
+        body: JSON.stringify({ tokens: tokenList })
+      });
+    } catch {
+      // Ignore transient sync error
+    }
+  };
+
   // Load tokens from Firestore
   const loadTokens = async () => {
     try {
       setLoading(true);
       const data = await getApiTokensFromFirestore();
       setTokens(data);
+      void syncTokensToServer(data);
       if (onSelectToken && data.length > 0 && !selectedTokenId) {
         onSelectToken(data[0]);
       }
@@ -73,7 +91,9 @@ export const ApiTokenManager: React.FC<ApiTokenManagerProps> = ({
         'Session Ops Manager',
         newTokenExpiry ? new Date(newTokenExpiry).toISOString() : undefined
       );
-      setTokens(prev => [created, ...prev]);
+      const nextTokens = [created, ...tokens];
+      setTokens(nextTokens);
+      void syncTokensToServer(nextTokens);
       setCreatedTokenNotice(created);
       setNewTokenName('');
       setNewTokenExpiry('');
@@ -90,7 +110,9 @@ export const ApiTokenManager: React.FC<ApiTokenManagerProps> = ({
     try {
       const nextState = !token.isActive;
       await toggleApiTokenInFirestore(token.id, nextState);
-      setTokens(prev => prev.map(t => t.id === token.id ? { ...t, isActive: nextState } : t));
+      const nextTokens = tokens.map(t => t.id === token.id ? { ...t, isActive: nextState } : t);
+      setTokens(nextTokens);
+      void syncTokensToServer(nextTokens);
     } catch (err) {
       console.error('Failed to toggle token:', err);
     }
@@ -102,7 +124,9 @@ export const ApiTokenManager: React.FC<ApiTokenManagerProps> = ({
     }
     try {
       await deleteApiTokenFromFirestore(id);
-      setTokens(prev => prev.filter(t => t.id !== id));
+      const nextTokens = tokens.filter(t => t.id !== id);
+      setTokens(nextTokens);
+      void syncTokensToServer(nextTokens);
       if (createdTokenNotice?.id === id) setCreatedTokenNotice(null);
     } catch (err) {
       console.error('Failed to delete token:', err);

@@ -48,7 +48,10 @@ import {
   syncUserProfileAndCheckAccess,
   subscribeToUserProfile,
   subscribeToAllUsers,
-  subscribeToSwapRequests
+  subscribeToSwapRequests,
+  testConnection,
+  getCurrentUserIdToken,
+  getApiTokensFromFirestore
 } from './firebase';
 import { onAuthStateChanged, User } from 'firebase/auth';
 
@@ -59,20 +62,26 @@ export default function App() {
     email?: string | null;
     displayName?: string | null;
     photoURL?: string | null;
-  } | null>(() => {
-    try {
-      const cached = sessionStorage.getItem('cortex_user_session');
-      return cached ? JSON.parse(cached) : null;
-    } catch {
-      return null;
-    }
-  });
+  } | null>(null);
   const [currentUserProfile, setCurrentUserProfile] = useState<AppUser | null>(null);
   const [isAuthChecking, setIsAuthChecking] = useState<boolean>(true);
   const [isAccessModalOpen, setIsAccessModalOpen] = useState<boolean>(false);
   const [pendingRequestsCount, setPendingRequestsCount] = useState<number>(0);
 
-  // Auth State Listener
+  // Authenticated fetch helper attaching current user's Firebase ID token
+  const authedFetch = useCallback(async (url: string, options: RequestInit = {}) => {
+    const idToken = await getCurrentUserIdToken();
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+      ...((options.headers as Record<string, string>) || {})
+    };
+    if (idToken) {
+      headers['Authorization'] = `Bearer ${idToken}`;
+    }
+    return fetch(url, { ...options, headers });
+  }, []);
+
+  // Auth State Listener (Sole Source of Truth)
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (user) => {
       if (user) {
@@ -88,12 +97,14 @@ export default function App() {
         } catch (e) {
           console.warn('Session storage write error:', e);
         }
+        testConnection().catch(() => {});
       } else {
-        const sessionActive = sessionStorage.getItem('cortex_user_session');
-        if (!sessionActive) {
-          setCurrentUser(null);
-          setCurrentUserProfile(null);
-        }
+        try {
+          sessionStorage.removeItem('cortex_user_session');
+        } catch {}
+        setCurrentUser(null);
+        setCurrentUserProfile(null);
+        setIsLoading(false);
       }
       setIsAuthChecking(false);
     });
@@ -127,9 +138,13 @@ export default function App() {
     };
   }, [currentUser?.uid]);
 
-  // Subscribe to pending requests count if current user is admin
+  // Subscribe to pending requests count if current user is approved admin
   useEffect(() => {
-    if (currentUserProfile?.role !== 'admin') {
+    if (
+      !auth.currentUser ||
+      currentUserProfile?.status !== 'approved' ||
+      currentUserProfile?.role !== 'admin'
+    ) {
       setPendingRequestsCount(0);
       return;
     }
@@ -140,7 +155,7 @@ export default function App() {
     });
 
     return () => unsubAll();
-  }, [currentUserProfile?.role]);
+  }, [currentUserProfile?.role, currentUserProfile?.status]);
 
   const handleLogout = useCallback(async () => {
     try {
@@ -222,8 +237,15 @@ export default function App() {
     return dates.map(d => d.dateStr);
   }, [dates]);
 
-  // Real-time synchronization for Shifts, Agents, Planning, and Swaps from Firestore database (ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d)
+  // Real-time synchronization & initial load gated strictly behind approved Firebase Auth
   useEffect(() => {
+    if (!currentUser?.uid || currentUserProfile?.status !== 'approved' || !auth.currentUser) {
+      setIsFirestoreConnected(false);
+      return;
+    }
+
+    let isMounted = true;
+
     const unsubSwaps = subscribeToSwapRequests((requests) => {
       setSwapRequests(requests);
     });
@@ -242,27 +264,14 @@ export default function App() {
       if (liveAssignments && Object.keys(liveAssignments).length > 0) {
         setPlanning((prev) => ({
           ...liveAssignments,
-          ...prev // preserve any uncommitted in-flight client modifications
+          ...prev
         }));
       }
     });
 
-    return () => {
-      unsubSwaps();
-      unsubShifts();
-      unsubAgents();
-      unsubPlanning();
-    };
-  }, []);
-
-  // Load from Firestore on initial mount
-  useEffect(() => {
-    let isMounted = true;
-
     async function loadData() {
       try {
         setIsLoading(true);
-        // Load exclusively from Firestore database ai-studio-05a03be6-da42-4223-bc36-3b30b710b29d
         const firestoreData = await initializeFirestoreIfNeeded();
 
         if (!isMounted) return;
@@ -275,6 +284,19 @@ export default function App() {
           setPlanning(firestoreData.planning || {});
           setIsFirestoreConnected(true);
         }
+
+        if (currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'manager') {
+          getApiTokensFromFirestore()
+            .then((tokens) => {
+              if (isMounted && tokens.length > 0) {
+                authedFetch('/api/tokens/sync', {
+                  method: 'POST',
+                  body: JSON.stringify({ tokens })
+                }).catch(() => {});
+              }
+            })
+            .catch(() => {});
+        }
       } catch (err) {
         console.warn('Firestore load failed:', err);
       } finally {
@@ -286,8 +308,26 @@ export default function App() {
 
     return () => {
       isMounted = false;
+      unsubSwaps();
+      unsubShifts();
+      unsubAgents();
+      unsubPlanning();
     };
-  }, []);
+  }, [currentUser?.uid, currentUserProfile?.status, currentUserProfile?.role, authedFetch]);
+
+  // Synchronize live client state to Express API memory when approved
+  useEffect(() => {
+    if (!currentUser?.uid || currentUserProfile?.status !== 'approved' || !auth.currentUser) {
+      return;
+    }
+    const timer = setTimeout(() => {
+      authedFetch('/api/sync-state', {
+        method: 'POST',
+        body: JSON.stringify({ agents, shifts, planning })
+      }).catch(() => {});
+    }, 600);
+    return () => clearTimeout(timer);
+  }, [agents, shifts, planning, currentUser?.uid, currentUserProfile?.status, authedFetch]);
 
   // Debounced API backend planning sync timer ref
   const apiSyncTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -296,21 +336,20 @@ export default function App() {
   const persistPlanning = useCallback((newPlanning: Record<string, string>, immediate: boolean = false) => {
     try {
       localStorage.setItem('cortex_planning_state', JSON.stringify(newPlanning));
-      
+
       // Persist to Firestore with debounced, serialized queue
       queuePlanningSaveToFirestore(newPlanning, immediate);
-      
+
       // Debounce sync to Express backend
       if (apiSyncTimerRef.current) clearTimeout(apiSyncTimerRef.current);
       apiSyncTimerRef.current = setTimeout(() => {
-        fetch('/api/planning', {
+        authedFetch('/api/planning', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ planning: newPlanning })
         }).catch(() => {});
       }, 1000);
     } catch {}
-  }, []);
+  }, [authedFetch]);
 
   // Update planning with undo/redo record
   const handleUpdatePlanning = useCallback((
@@ -388,15 +427,14 @@ export default function App() {
 
     // 4. Also persist to Express backend
     try {
-      await fetch('/api/agents/reorder', {
+      await authedFetch('/api/agents/reorder', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agents: orderedAgents })
       });
     } catch (err) {
       console.warn('Backend agents reorder API error:', err);
     }
-  }, []);
+  }, [authedFetch]);
 
   // Reset entire dataset to the imported API data with Firestore persistence
   const handleResetToApiDataset = useCallback(async () => {
@@ -429,9 +467,8 @@ export default function App() {
       await createAgentInFirestore(newAgent);
 
       // 2. Also inform Express server
-      fetch('/api/agents', {
+      authedFetch('/api/agents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newAgent)
       }).catch(() => {});
 
@@ -444,7 +481,7 @@ export default function App() {
       console.error('Failed to create agent:', err);
       throw err;
     }
-  }, []);
+  }, [authedFetch]);
 
   const handleUpdateAgent = useCallback(async (id: string, updates: Partial<Agent>) => {
     try {
@@ -452,9 +489,8 @@ export default function App() {
       await updateAgentInFirestore(id, updates);
 
       // 2. Update Express server
-      fetch(`/api/agents/${encodeURIComponent(id)}`, {
+      authedFetch(`/api/agents/${encodeURIComponent(id)}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       }).catch(() => {});
 
@@ -464,7 +500,7 @@ export default function App() {
       console.error('Failed to update agent:', err);
       throw err;
     }
-  }, []);
+  }, [authedFetch]);
 
   const handleDeleteAgent = useCallback(async (id: string) => {
     try {
@@ -472,7 +508,7 @@ export default function App() {
       await deleteAgentFromFirestore(id);
 
       // 2. Delete from Express server
-      fetch(`/api/agents/${encodeURIComponent(id)}`, {
+      authedFetch(`/api/agents/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       }).catch(() => {});
 
@@ -498,20 +534,19 @@ export default function App() {
       console.error('Failed to delete agent:', err);
       throw err;
     }
-  }, [persistPlanning]);
+  }, [persistPlanning, authedFetch]);
 
   // ==========================================
   // SHIFT CRUD HANDLERS
   // ==========================================
   const handleCreateShift = useCallback(async (newShift: Shift) => {
     try {
-      // 1. Save to Firestore (omitting label per Firestore schema)
+      // 1. Save to Firestore
       await createShiftInFirestore(newShift);
 
       // 2. Save to Express server
-      fetch('/api/shifts', {
+      authedFetch('/api/shifts', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(newShift)
       }).catch(() => {});
 
@@ -521,7 +556,7 @@ export default function App() {
       console.error('Failed to create shift:', err);
       throw err;
     }
-  }, []);
+  }, [authedFetch]);
 
   const handleUpdateShift = useCallback(async (id: string, updates: Partial<Shift>) => {
     try {
@@ -529,9 +564,8 @@ export default function App() {
       await updateShiftInFirestore(id, updates);
 
       // 2. Update Express server
-      fetch(`/api/shifts/${encodeURIComponent(id)}`, {
+      authedFetch(`/api/shifts/${encodeURIComponent(id)}`, {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(updates)
       }).catch(() => {});
 
@@ -541,7 +575,7 @@ export default function App() {
       console.error('Failed to update shift:', err);
       throw err;
     }
-  }, []);
+  }, [authedFetch]);
 
   const handleDeleteShift = useCallback(async (id: string) => {
     try {
@@ -549,7 +583,7 @@ export default function App() {
       await deleteShiftFromFirestore(id);
 
       // 2. Delete from Express server
-      fetch(`/api/shifts/${encodeURIComponent(id)}`, {
+      authedFetch(`/api/shifts/${encodeURIComponent(id)}`, {
         method: 'DELETE'
       }).catch(() => {});
 
@@ -559,7 +593,7 @@ export default function App() {
       console.error('Failed to delete shift:', err);
       throw err;
     }
-  }, []);
+  }, [authedFetch]);
 
   // Apply shift code to all currently selected cells
   const handleApplyShiftToSelection = useCallback((code: string) => {
@@ -755,7 +789,7 @@ export default function App() {
     };
 
     reader.readAsText(file, 'UTF-8');
-  }, [agents, handleUpdatePlanning]);
+  }, [agents, shifts, handleUpdatePlanning]);
 
   // Pending target swap requests for current user (where current user is targetAgent)
   const pendingTargetRequests = useMemo(() => {
@@ -980,7 +1014,7 @@ export default function App() {
           onDeleteShift={handleDeleteShift}
           activeSeasonFilter={activeSeasonFilter}
           onChangeSeasonFilter={setActiveSeasonFilter}
-          isAdminOrManager={currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'manager' || currentUser?.role === 'admin' || currentUser?.role === 'manager'}
+          isAdminOrManager={currentUserProfile?.role === 'admin' || currentUserProfile?.role === 'manager'}
         />
       </div>
 
